@@ -7,12 +7,14 @@ MEMORY {
 
 SECTIONS
 {
+
     .boot : {
         __boot_start = .;
         *(.text.bootstrap .text.bootstrap.*);
         *(.data.bootstrap .data.bootstrap.*);
         __boot_end = .;
     } > KERNEL AT> PHYSICAL
+
 
     .text : {
         __text_start = .;
@@ -31,4 +33,11 @@ SECTIONS
         *(.bss .bss.*);
         __bss_end = .;
     } > KERNEL
+
+      .stack (NOLOAD) : ALIGN(16)
+      {
+        __estack = .;
+        . += ALIGN(65536, 16);
+        __sstack = .;
+      } > KERNEL
 }
