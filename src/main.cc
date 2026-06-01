@@ -1,3 +1,5 @@
+#include <cstdint>
+#include <exception>
 #include <page.hpp>
 #include <page_alloc.hpp>
 
@@ -8,17 +10,18 @@ constinit static PageManager<4> ttb1_manager{};
 
 constinit static PageAllocator page_allocator{};
 
-#define SYMBOL_ADDRESS(x) (virt_to_page((size_t)x))
+#define SYMBOL_ADDRESS(x) (virt_to_page((size_t)x) << 12)
 
 extern "C" {
-extern char __boot_start[];
-extern char __boot_end[];
-extern char __text_start[];
-extern char __text_end[];
-extern char __data_start[];
-extern char __data_end[];
-extern char __bss_start[];
-extern char __bss_end[];
+extern volatile char __boot_start[];
+extern volatile char __boot_end[];
+extern volatile char __text_start[];
+extern volatile char __text_end[];
+extern volatile char __data_start[];
+extern volatile char __data_end[];
+extern volatile char __bss_start[];
+extern volatile char __bss_end[];
+extern volatile char __exc_vector[];
 }
 
 void build_kernel_pt() {
@@ -83,9 +86,18 @@ void build_kernel_pt() {
     )" ::"r"(ttbr_addr));
 }
 
+
 extern "C" {
+__attribute__((noinline, used))
+void register_exception_handler() {
+    uintptr_t exception_addr = (uintptr_t)__exc_vector;
+
+    asm volatile("msr vbar_el1, %0\nisb\n" ::"r"(exception_addr) : "memory");
+}
 void loop() {
-    build_kernel_pt();
+    // build_kernel_pt();
+    register_exception_handler();
+
     abort();
 }
 
@@ -94,4 +106,62 @@ void abort() {
         asm volatile("wfi");
     }
 }
+
+void _exc_entry() { asm volatile("b _exc_handler"); }
+
+void _exc_handler() {
+    // save context
+    asm volatile(R"(
+        stp x0, x1, [sp], #-16
+        stp x2, x3, [sp], #-16
+        stp x4, x5, [sp], #-16
+        stp x6, x7, [sp], #-16
+        stp x8, x9, [sp], #-16
+        stp x10, x11, [sp], #-16
+        stp x12, x13, [sp], #-16
+        stp x14, x15, [sp], #-16
+        stp x16, x17, [sp], #-16
+        stp x18, x19, [sp], #-16
+        stp x20, x21, [sp], #-16
+        stp x22, x23, [sp], #-16
+        stp x24, x25, [sp], #-16
+        stp x26, x27, [sp], #-16
+        stp x28, x29, [sp], #-16
+        str x30, [sp], #-16
+        mrs x0, elr_el1
+        mrs x1, spsr_el1
+        stp x0, x1, [sp], #-16 
+    )" ::: "memory");
+
+    while (1) {
+    }
+
+    // restore context
+    asm volatile(R"(
+        ldp x0, x1, [sp], #16 
+        msr x0, elr_el1
+        msr x1, spsr_el1
+        ldr x30, [sp], #16
+        ldp x28, x29, [sp], #16
+        ldp x26, x27, [sp], #16
+        ldp x24, x25, [sp], #16
+        ldp x22, x23, [sp], #16
+        ldp x20, x21, [sp], #16
+        ldp x18, x19, [sp], #16
+        ldp x16, x17, [sp], #16
+        ldp x14, x15, [sp], #16
+        ldp x12, x13, [sp], #16
+        ldp x10, x11, [sp], #16
+        ldp x8, x9, [sp], #16
+        ldp x6, x7, [sp], #16
+        ldp x4, x5, [sp], #16
+        ldp x2, x3, [sp], #16
+        ldp x0, x1, [sp], #16
+        eret
+    )" ::: "memory");
 }
+
+asm(R"(
+)");
+}
+

@@ -39,3 +39,14 @@ __enable_mmu:
 _spin:
     b _spin
 
+.global __exc_vector
+.balign 2048
+__exc_vector:
+.zero 512
+b _exc_entry
+.zero 76
+b _exc_entry
+.zero 76
+b _exc_entry
+.zero 512
+.zero 512
