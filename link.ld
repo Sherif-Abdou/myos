@@ -16,28 +16,28 @@ SECTIONS
     } > KERNEL AT> PHYSICAL
 
 
-    .text : {
+    .text : ALIGN(4096) {
         __text_start = .;
         *(.text .text.*);
         __text_end = .;
     } > KERNEL AT> PHYSICAL
 
-    .data : {
+    .data : ALIGN(4096) {
         __data_start = .;
         *(.data .data.*);
         __data_end = .;
     } > KERNEL AT> PHYSICAL
 
-    .bss (NOLOAD) : {
+    .bss (NOLOAD) : ALIGN(4096) {
         __bss_start = .;
         *(.bss .bss.*);
         __bss_end = .;
     } > KERNEL
 
-      .stack (NOLOAD) : ALIGN(16)
+      .stack (NOLOAD) : ALIGN(4096)
       {
-        __estack = .;
+        __stack_start = .;
         . += ALIGN(65536, 16);
-        __sstack = .;
+        __stack_end = .;
       } > KERNEL
 }

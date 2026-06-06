@@ -32,6 +32,24 @@ struct page_descriptor_t {
     page_descriptor_t &operator=(page_descriptor_t &&) = default;
 };
 
+class Page {
+  private:
+    size_t page_number_;
+
+  public:
+    constexpr Page(size_t page_number_) : page_number_(page_number_) {}
+
+    constexpr size_t page_number() const { return this->page_number_; }
+
+    void *virt_addr() const {
+        return reinterpret_cast<void*>(0xFFFFFF8040000000 | page_number() << 12);
+    };
+
+    size_t phys_addr() const {
+        return page_number() << 12;
+    }
+};
+
 template <size_t N> class PageManager {
   private:
     // An invalid page to follow break before make
@@ -60,7 +78,8 @@ template <size_t N> class PageManager {
 
     MOVE_ONLY(PageManager);
 
-    template <typename F> void modify_and_apply_page(size_t index, F transform) {
+    template <typename F>
+    void modify_and_apply_page(size_t index, F transform) {
         static_assert(std::is_invocable_v<F, page_descriptor_t &>,
                       "Transform must be a function.");
 
@@ -97,7 +116,7 @@ template <size_t N> class PageManager {
         const page_descriptor_t &l1_table = this->table[l1_index];
 
         if (!l1_table.fields.nblock)
-            return (addr & !l1_mask) | (l1_table.fields.nlta << 30);
+            return (addr & ~l1_mask) | (l1_table.fields.nlta << 30);
 
         return 0;
     }

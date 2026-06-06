@@ -72,7 +72,7 @@ void ByteAllocator::init() {
 }
 
 void *ByteAllocator::alloc(size_t size) {
-    size = align_up(size, byte_alignment);
+    size = align(size, byte_alignment);
     size_t effective_size = size + sizeof(Meta);
     auto cursor = make_cursor();
     /* First fit search. */
