@@ -4,14 +4,13 @@ CC:=aarch64-none-elf-gcc
 CXX:=aarch64-none-elf-g++
 OBJCOPY:=aarch64-none-elf-objcopy
 
-CXXFLAGS:=-std=c++20 -ffreestanding -nostdlib -fno-exceptions -march=armv8-a+simd  -Wall -Wextra -O2 -g
+CXXFLAGS:=-std=c++20 -ffreestanding -nostdlib -fno-exceptions -march=armv8-a+simd  -Wall -Wextra -Og -fno-inline -g
 LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -lgcc -T link.ld
-INCLUDES:=include/
+INCLUDES:=src/
 
 TARGET:=build/myos
 
 SRC_DIR:=src
-INCLUDE_DIR:=include
 OBJ_DIR:=build/obj
 BIN_DIR:=build/bin
 

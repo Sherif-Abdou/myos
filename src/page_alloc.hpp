@@ -59,7 +59,7 @@ class PageAllocator {
             return end.page_number() - start.page_number();
         }
 
-        template <typename T, typename... Args> T* make(Args &&...args) {
+        template <typename T, typename... Args> T *make(Args &&...args) {
             return new (start.virt_addr()) T(std::forward<Args>(args)...);
         }
     };
@@ -111,8 +111,13 @@ class PageAllocator {
     constexpr std::optional<PageRange> reserve_free_range(size_t range_size) {
         PageRange range{0, 0};
         for (size_t page = 0; page < page_bitmask.page_count(); ++page) {
-            if (range.page_count() >= range_size)
+            if (range.page_count() >= range_size) {
+                for (size_t i = range.start.page_number();
+                     i < range.end.page_number(); ++i) {
+                    alloc(i);
+                }
                 return {range};
+            }
             if (page_bitmask.is_free(page)) {
                 range.end = Page(range.end.page_number() + 1);
             } else {

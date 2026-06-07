@@ -42,37 +42,30 @@ void build_kernel_pt() {
     page_allocator.alloc_from_ptr(&ttb1_manager);
 
     auto kernel_l2_pages = page_allocator.reserve_free_range(2);
-    auto kernel_l3_pages = page_allocator.reserve_free_range(512 + 1);
     auto l2_page_manager = kernel_l2_pages->make<PageManager<512>>();
-    auto l3_page_manager =
-        kernel_l3_pages->make<std::array<PageManager<512>, 512>>();
 
     for (size_t index = 0; index < l2_page_manager->size(); ++index) {
         l2_page_manager->modify_page(index, [&](page_descriptor_t &descriptor) {
-            descriptor.fields.nblock = 1;
+            descriptor.fields.nblock = 0;
             descriptor.fields.valid = 1;
-            descriptor.fields.mem_attrs = 0;
-            descriptor.fields.nlta = virt_to_page(std::bit_cast<size_t>(
-                                         &((*l3_page_manager)[index]))) >>
-                                     12;
+            /* Deice nGnRnE memory assumed */
+            descriptor.fields.mem_attrs = 1;
+            descriptor.fields.af = 1;
+            descriptor.fields.nlta = index << 9 | (0x40000000 >> 12);
         });
-    }
-    for (size_t l2_block = 0; l2_block < l3_page_manager->size(); ++l2_block) {
-        auto l3_page = &((*l3_page_manager)[l2_block]);
-        for (size_t index = 0; index < l3_page->size(); ++index) {
-            Page page = {l2_block * 512 + index};
-            l3_page->modify_page(index, [&](page_descriptor_t &descriptor) {
-                descriptor.fields.nblock = 0;
-                descriptor.fields.valid = !page_allocator.is_free(page);
-                descriptor.fields.mem_attrs = 0;
-                descriptor.fields.nlta = page.page_number();
-            });
-        }
     }
 
     ttb1_manager.modify_page(0, [&](page_descriptor_t &descriptor) {
         descriptor.fields.valid = 1;
+        descriptor.fields.nblock = 0;
+        descriptor.fields.af = 1;
+        descriptor.fields.nlta = 0;
+    });
+
+    ttb1_manager.modify_page(1, [&](page_descriptor_t &descriptor) {
+        descriptor.fields.valid = 1;
         descriptor.fields.nblock = 1;
+        descriptor.fields.af = 1;
         descriptor.fields.nlta =
             virt_to_page(std::bit_cast<size_t>(l2_page_manager));
     });
@@ -83,9 +76,9 @@ void build_kernel_pt() {
     asm volatile(R"(
         tlbi vmalle1
         dsb ish
-        isb
+        isb sy
         msr ttbr1_el1, %0
-        isb
+        isb sy
     )" ::"r"(ttbr_addr));
 }
 
@@ -96,8 +89,12 @@ __attribute__((noinline, used)) void register_exception_handler() {
     asm volatile("msr vbar_el1, %0\nisb\n" ::"r"(exception_addr) : "memory");
 }
 void loop() {
-    // build_kernel_pt();
-    register_exception_handler();
+    build_kernel_pt();
+    // register_exception_handler();
+
+    for (int i = 0; i < 10; ++i) {
+        asm volatile("nop");
+    }
 
     abort();
 }

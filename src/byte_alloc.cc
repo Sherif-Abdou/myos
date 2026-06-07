@@ -71,7 +71,7 @@ void ByteAllocator::init() {
     first_hole->next = nullptr;
 }
 
-void *ByteAllocator::alloc(size_t size) {
+void *ByteAllocator::alloc_raw(size_t size) {
     size = align(size, byte_alignment);
     size_t effective_size = size + sizeof(Meta);
     auto cursor = make_cursor();

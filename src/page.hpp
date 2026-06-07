@@ -1,26 +1,26 @@
 #pragma once
 
+#include "utils.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
-#include <utils.hpp>
 
 struct page_descriptor_t {
     union {
         struct {
-            unsigned short valid : 1;
-            unsigned short nblock : 1;
-            unsigned short mem_attrs : 4;
-            unsigned short s2 : 2;
+            uint64_t valid : 1;
+            uint64_t nblock : 1;
+            uint64_t mem_attrs : 4;
+            uint64_t s2 : 2;
             // Sharability
-            unsigned short sh : 2;
-            unsigned short af : 1;
-            unsigned short : 1;
+            uint64_t sh : 2;
+            uint64_t af : 1;
+            uint64_t : 1;
             // Next level address, either for a page/block or for a lower layer
-            unsigned long nlta : 32;
-            unsigned short : 11;
-            unsigned short upper_attrs : 5;
+            uint64_t nlta : 36;
+            uint64_t : 11;
+            uint64_t upper_attrs : 5;
         } fields;
         uint64_t raw;
     };
@@ -32,6 +32,8 @@ struct page_descriptor_t {
     page_descriptor_t &operator=(page_descriptor_t &&) = default;
 };
 
+static_assert(sizeof(page_descriptor_t) == 8);
+
 class Page {
   private:
     size_t page_number_;
@@ -42,12 +44,11 @@ class Page {
     constexpr size_t page_number() const { return this->page_number_; }
 
     void *virt_addr() const {
-        return reinterpret_cast<void*>(0xFFFFFF8040000000 | page_number() << 12);
+        return reinterpret_cast<void *>(0xFFFFFF8040000000 |
+                                        (page_number() << 12));
     };
 
-    size_t phys_addr() const {
-        return page_number() << 12;
-    }
+    size_t phys_addr() const { return page_number() << 12; }
 };
 
 template <size_t N> class PageManager {
@@ -108,17 +109,6 @@ template <size_t N> class PageManager {
         swap_page.raw = target_page->raw;
         transform(swap_page);
         target_page->raw = swap_page.raw;
-    }
-
-    constexpr size_t virt_to_phys(size_t addr) const {
-        addr = addr & 0x7FFFFFFFFF;
-        size_t l1_index = addr >> 30;
-        const page_descriptor_t &l1_table = this->table[l1_index];
-
-        if (!l1_table.fields.nblock)
-            return (addr & ~l1_mask) | (l1_table.fields.nlta << 30);
-
-        return 0;
     }
 
     constexpr size_t size() const { return table.size(); }

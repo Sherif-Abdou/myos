@@ -31,7 +31,7 @@ __enable_mmu:
     msr sctlr_el1, x2
     isb sy
     ldr x1, =loop 
-    ldr x4, =__sstack
+    ldr x4, =__stack_start
     mov sp, x4
     blr x1
     b _spin

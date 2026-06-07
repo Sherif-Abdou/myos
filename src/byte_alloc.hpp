@@ -1,4 +1,8 @@
+#pragma once
+
 #include <cstddef>
+#include <optional>
+#include <utility>
 
 /* All allocations are 8 byte aligned. */
 class ByteAllocator {
@@ -36,6 +40,9 @@ class ByteAllocator {
     void *alloc_in(Cursor &, size_t size);
     constexpr Cursor make_cursor();
 
+    static std::optional<ByteAllocator> global_alloc;
+
+
   public:
     static constexpr size_t byte_alignment = 8;
     ByteAllocator(size_t start_address, size_t end_address)
@@ -43,6 +50,25 @@ class ByteAllocator {
         init();
     };
 
-    void *alloc(size_t size);
-    void free(void* ptr);
+    void *alloc_raw(size_t size);
+
+    template <typename T, typename... Args> T *alloc(Args &&...args) {
+        static_assert(alignof(T) < byte_alignment,
+                      "Allocator only supports eight byte alignment");
+        return new (alloc_raw(sizeof(T))) T(std::forward<Args>(args)...);
+    }
+
+    void free(void *ptr);
+
+    static void init_global_allocator(size_t start_address,
+                                      size_t end_address) {
+        global_alloc.emplace(start_address, end_address);
+    }
+
+    template <typename T, typename... Args> static T *kalloc(Args &&...args) {
+        static_assert(alignof(T) <= byte_alignment,
+                      "Allocator only supports eight byte alignment");
+        return new (global_alloc->alloc_raw(sizeof(T)))
+            T(std::forward<Args>(args)...);
+    }
 };
