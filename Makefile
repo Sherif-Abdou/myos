@@ -4,8 +4,8 @@ CC:=aarch64-none-elf-gcc
 CXX:=aarch64-none-elf-g++
 OBJCOPY:=aarch64-none-elf-objcopy
 
-CXXFLAGS:=-std=c++20 -ffreestanding -nostdlib -fno-exceptions -march=armv8-a+simd  -Wall -Wextra -Og -fno-inline -g
-LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -lgcc -T link.ld
+CXXFLAGS:=-std=c++20 -ffreestanding -nostdlib -fno-exceptions -mgeneral-regs-only -march=armv8-a+simd  -Wall -Wextra -Og -fno-inline -g
+LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -mgeneral-regs-only -lgcc -T link.ld
 INCLUDES:=src/
 
 TARGET:=build/myos
@@ -41,7 +41,19 @@ clean:
 	rm -rf build/
 
 emulate: $(TARGET)
-	qemu-system-aarch64 -M virt -cpu cortex-a76 -smp 1 -m 1G -nographic -kernel build/myos
+	qemu-system-aarch64 -M virt -cpu cortex-a76 -smp 1 -m 1G -nographic -kernel build/myos -device virtio-serial-device -device virtconsole,chardev=ch0 -chardev stdio,id=ch0,mux=on
 
 debug: $(TARGET)
-	qemu-system-aarch64 -M virt -cpu cortex-a76 -smp 1 -m 1G -nographic -kernel build/myos -s -S
+	qemu-system-aarch64 \
+		-M virt -cpu cortex-a76 -smp 1 -m 1G \
+		-display none \
+		-kernel build/myos \
+		-no-reboot \
+		-global virtio-mmio.force-legacy=false \
+		-device virtio-serial-device \
+		-device virtconsole,chardev=ch0 \
+		-chardev stdio,id=ch0,mux=on \
+		-mon chardev=ch0,mode=readline \
+		-serial null \
+		-s -S
+

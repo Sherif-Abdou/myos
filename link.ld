@@ -28,6 +28,12 @@ SECTIONS
         __data_end = .;
     } > KERNEL AT> PHYSICAL
 
+    .rodata : ALIGN(4096) {
+        __rodata_start = .;
+        *(.rodata .rodata.*);
+        __rodata_end = .;
+    } > KERNEL AT> PHYSICAL
+
     .bss (NOLOAD) : ALIGN(4096) {
         __bss_start = .;
         *(.bss .bss.*);

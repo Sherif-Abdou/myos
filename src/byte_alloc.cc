@@ -1,6 +1,8 @@
 #include <byte_alloc.hpp>
 #include <utils.hpp>
 
+std::optional<ByteAllocator> ByteAllocator::global_alloc{};
+
 constexpr ByteAllocator::Hole &ByteAllocator::Cursor::operator*() {
     return *this->current;
 }
@@ -69,6 +71,7 @@ void ByteAllocator::init() {
     Hole *first_hole = reinterpret_cast<Hole *>(_start_address);
     first_hole->size = _end_address - _start_address;
     first_hole->next = nullptr;
+    hole = first_hole;
 }
 
 void *ByteAllocator::alloc_raw(size_t size) {
@@ -114,4 +117,10 @@ void ByteAllocator::coalesce() {
             cursor.next();
         }
     }
+}
+
+void ByteAllocator::init_global_allocator(size_t start_address,
+                                          size_t end_address) {
+    ByteAllocator::global_alloc.emplace(start_address, end_address);
+    ByteAllocator::global_alloc->init();
 }

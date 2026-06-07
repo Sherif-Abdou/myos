@@ -48,5 +48,7 @@ class Console {
     void setup_tx_queue();
 
 public:
-    void init();
+    void init(volatile uint32_t *base_);
+
+    void send_blocking(const char *buf, uint32_t len);
 };

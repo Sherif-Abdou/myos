@@ -13,9 +13,9 @@ class ByteAllocator {
     };
 
     struct Cursor {
-        Hole **head;
-        Hole *previous;
-        Hole *current;
+        Hole **head = nullptr;
+        Hole *previous = nullptr;
+        Hole *current = nullptr;
 
         constexpr Hole &operator*();
         constexpr Hole *operator->();
@@ -33,17 +33,16 @@ class ByteAllocator {
     size_t _start_address;
     size_t _end_address;
 
-    Hole *hole;
+    Hole *hole = nullptr;
 
-    void init();
     void coalesce();
     void *alloc_in(Cursor &, size_t size);
     constexpr Cursor make_cursor();
 
     static std::optional<ByteAllocator> global_alloc;
 
-
   public:
+    void init();
     static constexpr size_t byte_alignment = 8;
     ByteAllocator(size_t start_address, size_t end_address)
         : _start_address(start_address), _end_address(end_address) {
@@ -60,11 +59,7 @@ class ByteAllocator {
 
     void free(void *ptr);
 
-    static void init_global_allocator(size_t start_address,
-                                      size_t end_address) {
-        global_alloc.emplace(start_address, end_address);
-    }
-
+    static void init_global_allocator(size_t start_address, size_t end_address);
     template <typename T, typename... Args> static T *kalloc(Args &&...args) {
         static_assert(alignof(T) <= byte_alignment,
                       "Allocator only supports eight byte alignment");
