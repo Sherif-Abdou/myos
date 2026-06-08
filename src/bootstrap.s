@@ -14,7 +14,7 @@ _start:
     b __configure_pt
 
 __configure_pt:
-    ldr x2, =((0b11001 << 16) | (0b11001) | (0b11 << 12) | (0b01) << 10 | (0b01) << 8)
+    ldr x2, =(0b010 << 32) | (0b10 << 30) | ((0b11001 << 16) | (0b11001) | (0b11 << 12) | (0b01) << 10 | (0b01) << 8)
     msr tcr_el1, x2
     adr x2, __initial_pt1
     b __enable_mmu
@@ -28,6 +28,11 @@ __enable_mmu:
     isb sy
     mrs x2, sctlr_el1
     orr x2, x2, #1
+    dc civac, x0
+    dsb ish
+    tlbi vmalle1is
+    dsb ish
+    isb sy
     msr sctlr_el1, x2
     isb sy
     ldr x1, =loop 
