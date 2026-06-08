@@ -1,7 +1,10 @@
 #include "byte_alloc.hpp"
 #include "utils.hpp"
 #include <cstdint>
+#include <optional>
 #include <virt_console.hpp>
+
+std::optional<Console *> Console::kernel_console{std::nullopt};
 
 void Console::init(volatile uint32_t *base_) {
     base = base_;
@@ -76,14 +79,26 @@ void Console::send_blocking(const char *buf, uint32_t len) {
     tx_desc_avail->ring[avail_slot] = idx;
 
     asm volatile("dmb ish" ::: "memory");
-    tx_desc_avail->idx = tx_desc_avail->idx + 1;
+    tx_desc_avail->idx++;
     asm volatile("dmb ish" ::: "memory");
 
     uint16_t last_used_idx = tx_desc_used->idx;
 
     base[0x50 / 4] = 1;
 
+    // Busyloop until done
     while (last_used_idx == tx_desc_used->idx) {
         asm volatile("nop");
+    }
+}
+
+void Console::create_console(volatile uint32_t *base_) {
+    kernel_console.emplace(ByteAllocator::kalloc<Console>());
+    kernel_console.value()->init(base_);
+}
+
+void Console::print(const char *buf) {
+    if (kernel_console.has_value()) {
+        kernel_console.value()->send_blocking(buf, strlen(buf));
     }
 }

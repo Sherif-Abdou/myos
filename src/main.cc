@@ -1,9 +1,9 @@
 #include "byte_alloc.hpp"
 #include "virt_console.hpp"
 #include <cstdint>
+#include <mem.hpp>
 #include <page.hpp>
 #include <page_alloc.hpp>
-#include <mem.hpp>
 
 extern "C" void abort();
 
@@ -22,7 +22,6 @@ extern volatile char __bss_start[];
 extern volatile char __bss_end[];
 extern volatile char __stack_start[];
 extern volatile char __stack_end[];
-
 extern volatile char __exc_vector[];
 }
 
@@ -103,18 +102,13 @@ __attribute__((noinline, used)) void register_exception_handler() {
     asm volatile("msr vbar_el1, %0\nisb\n" ::"r"(exception_addr) : "memory");
 }
 void loop() {
+    register_exception_handler();
     build_kernel_pt();
     create_heap();
-    register_exception_handler();
 
-    Console console;
-    console.init((volatile uint32_t *)0xFFFFFF800a003e00);
+    Console::create_console((volatile uint32_t *)0xFFFFFF800a003e00);
 
-    console.send_blocking("hi\n", 4);
-
-    for (int i = 0; i < 10; ++i) {
-        asm volatile("nop");
-    }
+    Console::print("Hello world!!!\n");
 
     abort();
 }

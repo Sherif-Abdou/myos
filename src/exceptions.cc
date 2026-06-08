@@ -17,18 +17,12 @@ struct esr_t {
 };
 
 bool handle_kernel_mmu(void) {
+    bool should_abort = true;
     size_t fault_address;
 
     asm volatile("mrs %0, far_el1" : "=r"(fault_address));
 
-    size_t page = virt_to_page(fault_address);
-
-    if (!page_allocator.is_free(page)) {
-        size_t top_index = (page >> 18) & 0x1FF;
-        size_t l2_index = (page >> 9) & 0x1FF;
-    }
-
-    return true;
+    return should_abort;
 }
 
 extern "C" void sexc_handler(void) {

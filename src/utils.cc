@@ -23,3 +23,9 @@ extern "C" void* memmove(void* dst, const void* src, size_t n) {
     }
     return dst;
 }
+
+extern "C" size_t strlen(const char *src) {
+    size_t size = 0;
+    while (*(src++)) ++size;
+    return size;
+}

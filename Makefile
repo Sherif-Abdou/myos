@@ -41,7 +41,17 @@ clean:
 	rm -rf build/
 
 emulate: $(TARGET)
-	qemu-system-aarch64 -M virt -cpu cortex-a76 -smp 1 -m 1G -nographic -kernel build/myos -device virtio-serial-device -device virtconsole,chardev=ch0 -chardev stdio,id=ch0,mux=on
+	qemu-system-aarch64 \
+		-M virt -cpu cortex-a76 -smp 1 -m 1G \
+		-display none \
+		-kernel build/myos \
+		-no-reboot \
+		-global virtio-mmio.force-legacy=false \
+		-device virtio-serial-device \
+		-device virtconsole,chardev=ch0 \
+		-chardev stdio,id=ch0,mux=on \
+		-mon chardev=ch0,mode=readline \
+		-serial null
 
 debug: $(TARGET)
 	qemu-system-aarch64 \
