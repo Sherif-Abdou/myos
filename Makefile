@@ -1,3 +1,4 @@
+HOST_OS:=$(shell uname -s)
 ARCH:=arm64
 
 CC:=aarch64-none-elf-gcc
@@ -40,9 +41,24 @@ $(OBJ_DIR) $(BIN_DIR):
 clean:
 	rm -rf build/
 
+
+ifeq ($(HOST_OS),Darwin)
+debug: $(TARGET)
+	qemu-system-aarch64 \
+		-M virt,accel=hvf -cpu host -smp 1 -m 1G \
+		-display none \
+		-kernel build/myos \
+		-no-reboot \
+		-global virtio-mmio.force-legacy=false \
+		-device virtio-serial-device \
+		-device virtconsole,chardev=ch0 \
+		-chardev stdio,id=ch0,mux=on \
+		-mon chardev=ch0,mode=readline \
+		-serial null \
+		-s -S
 emulate: $(TARGET)
 	qemu-system-aarch64 \
-		-M virt -cpu cortex-a76 -smp 1 -m 1G \
+		-M virt,accel=hvf -cpu host -smp 1 -m 1G \
 		-display none \
 		-kernel build/myos \
 		-no-reboot \
@@ -52,7 +68,7 @@ emulate: $(TARGET)
 		-chardev stdio,id=ch0,mux=on \
 		-mon chardev=ch0,mode=readline \
 		-serial null
-
+else
 debug: $(TARGET)
 	qemu-system-aarch64 \
 		-M virt -cpu cortex-a76 -smp 1 -m 1G \
@@ -66,4 +82,17 @@ debug: $(TARGET)
 		-mon chardev=ch0,mode=readline \
 		-serial null \
 		-s -S
+emulate: $(TARGET)
+	qemu-system-aarch64 \
+		-M virt -cpu cortex-a76 -smp 1 -m 1G \
+		-display none \
+		-kernel build/myos \
+		-no-reboot \
+		-global virtio-mmio.force-legacy=false \
+		-device virtio-serial-device \
+		-device virtconsole,chardev=ch0 \
+		-chardev stdio,id=ch0,mux=on \
+		-mon chardev=ch0,mode=readline \
+		-serial null
+endif
 
