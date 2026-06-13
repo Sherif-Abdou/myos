@@ -6,7 +6,7 @@ CXX:=aarch64-none-elf-g++
 OBJCOPY:=aarch64-none-elf-objcopy
 
 CXXFLAGS:=-std=c++20 -ffreestanding -nostdlib -fno-exceptions -mgeneral-regs-only -march=armv8-a+simd  -Wall -Wextra -Og -fno-inline -g
-LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -mgeneral-regs-only -lgcc -T link.ld
+LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -mgeneral-regs-only -T link.ld
 INCLUDES:=src/
 
 TARGET:=build/myos
@@ -27,13 +27,13 @@ ASM_OBJS:=$(patsubst $(SRC_DIR)/%.s, $(OBJ_DIR)/%.o, $(ASM_SRCS))
 all: $(TARGET)
 
 $(TARGET): $(OBJS) $(ASM_OBJS) link.ld | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $(OBJS) $(ASM_OBJS) -o $@
+	$(CXX) $(LDFLAGS) $(OBJS) $(ASM_OBJS) -o $@ -lgcc
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cc | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o $@ -lgcc
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.s | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o $@ 
+	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o $@  -lgcc
 
 $(OBJ_DIR) $(BIN_DIR):
 	mkdir -p $@

@@ -66,4 +66,9 @@ class ByteAllocator {
         return new (global_alloc->alloc_raw(sizeof(T)))
             T(std::forward<Args>(args)...);
     }
+
+    template <typename T> static void kfree(T *ptr) {
+        ptr->~T();
+        global_alloc->free(ptr);
+    }
 };

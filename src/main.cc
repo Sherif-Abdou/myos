@@ -4,6 +4,9 @@
 #include <mem.hpp>
 #include <page.hpp>
 #include <page_alloc.hpp>
+#include <linked_node.hpp>
+#include <atomic>
+#include "gic.hpp"
 
 extern "C" void abort();
 
@@ -26,6 +29,8 @@ extern volatile char __exc_vector[];
 }
 
 void build_kernel_pt() {
+    std::atomic_uint32_t integer;
+    integer.fetch_add(1);
     page_allocator.reserve_local_pages();
     page_allocator.alloc_from_start_end(SYMBOL_ADDRESS(__boot_start),
                                         SYMBOL_ADDRESS(__boot_end));
@@ -115,7 +120,7 @@ void loop() {
 
 void abort() {
     while (1) {
-        asm volatile("wfe");
+        asm volatile("wfi");
     }
 }
 }
