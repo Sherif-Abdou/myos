@@ -1,3 +1,5 @@
+include src/module.mk
+
 HOST_OS:=$(shell uname -s)
 ARCH:=arm64
 
@@ -5,37 +7,38 @@ CC:=aarch64-none-elf-gcc
 CXX:=aarch64-none-elf-g++
 OBJCOPY:=aarch64-none-elf-objcopy
 
-CXXFLAGS:=-std=c++20 -ffreestanding -nostdlib -fno-exceptions -mgeneral-regs-only -march=armv8-a+simd  -Wall -Wextra -Og -fno-inline -g
+DEPFLAGS = -MMD -MP
+
+CXXFLAGS+=-std=c++20
+CXXFLAGS+=-ffreestanding -nostdlib -fno-exceptions -mgeneral-regs-only
+CXXFLAGS+=-march=armv8-a+simd -Wall -Wextra $(DEPFLAGS)
+CXXFLAGS+=-Og -fno-inline -g
+
 LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -mgeneral-regs-only -T link.ld
 INCLUDES:=src/
 
+OBJDIR:=build
 TARGET:=build/myos
 
-SRC_DIR:=src
-OBJ_DIR:=build/obj
-BIN_DIR:=build/bin
-
-DIRS:=$(shell find src -type f)
-SRCS:=$(wildcard $(SRC_DIR)/*.cc)
-OBJS:=$(patsubst $(SRC_DIR)/%.cc, $(OBJ_DIR)/%.o, $(SRCS))
-
-ASM_SRCS:=$(wildcard $(SRC_DIR)/*.s)
-ASM_OBJS:=$(patsubst $(SRC_DIR)/%.s, $(OBJ_DIR)/%.o, $(ASM_SRCS))
-
 .PHONY: all clean
+vpath %.cc src/
+vpath %.s src/
+
+OBJDIRS:=$(addprefix $(OBJDIR)/, $(sort $(dir $(OBJS))))
+-include $(OBJS:.o=.d)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) $(ASM_OBJS) link.ld | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $(OBJS) $(ASM_OBJS) -o $@ -lgcc
+$(TARGET): $(OBJS) link.ld | $(OBJDIRS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(addprefix $(OBJDIR)/, $(OBJS)) -o $@ -lgcc
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cc | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o $@ -lgcc
+%.o: %.cc | $(OBJDIRS)
+	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o build/$@ -lgcc
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.s | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o $@  -lgcc
+%.o: %.s | $(OBJDIRS)
+	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o build/$@  -lgcc
 
-$(OBJ_DIR) $(BIN_DIR):
+$(OBJDIRS):
 	mkdir -p $@
 
 clean:
@@ -45,7 +48,7 @@ clean:
 ifeq ($(HOST_OS),Darwin)
 debug: $(TARGET)
 	qemu-system-aarch64 \
-		-M virt,accel=hvf -cpu host -smp 1 -m 1G \
+		-M virt,accel=hvf,gic-version=3 -cpu host -smp 1 -m 1G \
 		-display none \
 		-kernel build/myos \
 		-no-reboot \
@@ -58,7 +61,7 @@ debug: $(TARGET)
 		-s -S
 emulate: $(TARGET)
 	qemu-system-aarch64 \
-		-M virt,accel=hvf -cpu host -smp 1 -m 1G \
+		-M virt,accel=hvf,gic-version=3 -cpu host -smp 1 -m 1G \
 		-display none \
 		-kernel build/myos \
 		-no-reboot \
@@ -71,7 +74,7 @@ emulate: $(TARGET)
 else
 debug: $(TARGET)
 	qemu-system-aarch64 \
-		-M virt -cpu cortex-a76 -smp 1 -m 1G \
+		-M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 1G \
 		-display none \
 		-kernel build/myos \
 		-no-reboot \
@@ -84,7 +87,7 @@ debug: $(TARGET)
 		-s -S
 emulate: $(TARGET)
 	qemu-system-aarch64 \
-		-M virt -cpu cortex-a76 -smp 1 -m 1G \
+		-M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 1G \
 		-display none \
 		-kernel build/myos \
 		-no-reboot \

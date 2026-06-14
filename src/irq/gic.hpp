@@ -126,9 +126,20 @@ class VolatileRegion {
 
 class Gic {
     VolatileRegion distributor;
+    VolatileRegion redistributor;
 
     void init_distributor();
     void enable_system_registers();
   public:
+    enum class IrqType {
+        SGI,
+        PPI,
+        SPI,
+    };
     void init();
+    Gic(VolatileRegion distributor, VolatileRegion redistributor);
+
+    static uint64_t interrupt_available();
+    static void acknowledge(uint64_t irq);
+    static void complete(uint64_t irq);
 };

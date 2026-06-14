@@ -11,6 +11,8 @@
         asm volatile("msr " #name ", %0" ::"r"(x));                            \
     } while (0)
 
+void isb(); 
+
 #define MOVE_ONLY(name)                                                        \
     name(const name &) = delete;                                               \
     name &operator=(const name &) = delete;                                    \
@@ -24,6 +26,11 @@ template <typename T> T align(T value, size_t alignment) {
 template <typename T> constexpr T virt_to_phys(T addr) {
     addr = addr & 0x7FFFFFFFFF;
     return addr;
+}
+
+template<typename T>
+constexpr T bit(T n) {
+    return 1U << n;
 }
 
 extern "C" void *memset(void *dst, int c, size_t n);

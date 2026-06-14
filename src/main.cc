@@ -1,12 +1,12 @@
 #include "byte_alloc.hpp"
+#include "irq/gic.hpp"
 #include "virt_console.hpp"
+#include <atomic>
 #include <cstdint>
+#include <linked_node.hpp>
 #include <mem.hpp>
 #include <page.hpp>
 #include <page_alloc.hpp>
-#include <linked_node.hpp>
-#include <atomic>
-#include "gic.hpp"
 
 extern "C" void abort();
 
@@ -114,6 +114,10 @@ void loop() {
     Console::create_console((volatile uint32_t *)0xFFFFFF800a003e00);
 
     Console::print("Hello world!!!\n");
+
+    Gic gic(reinterpret_cast<volatile uint8_t *>(0x8000000),
+            reinterpret_cast<volatile uint8_t *>(0x80a0000));
+    gic.init();
 
     abort();
 }

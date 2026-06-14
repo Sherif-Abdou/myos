@@ -1,0 +1,1 @@
+OBJS += gic.o
