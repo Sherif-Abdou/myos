@@ -78,11 +78,12 @@ void Console::send_blocking(const char *buf, uint32_t len) {
     uint32_t avail_slot = tx_desc_avail->idx;
     tx_desc_avail->ring[avail_slot] = idx;
 
+    uint16_t last_used_idx = tx_desc_used->idx;
+
     asm volatile("dmb ish" ::: "memory");
     tx_desc_avail->idx++;
     asm volatile("dmb ish" ::: "memory");
 
-    uint16_t last_used_idx = tx_desc_used->idx;
 
     base[0x50 / 4] = 1;
 

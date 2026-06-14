@@ -140,6 +140,10 @@ class Gic {
     Gic(VolatileRegion distributor, VolatileRegion redistributor);
 
     static uint64_t interrupt_available();
+    void enable_ppi(uint64_t irqn);
+    static void set_cpu_prio(uint64_t prio);
+    static uint32_t acknowledge();
     static void acknowledge(uint64_t irq);
     static void complete(uint64_t irq);
+    static void enable_irqs();
 };

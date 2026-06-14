@@ -1,5 +1,7 @@
 #include "byte_alloc.hpp"
 #include "irq/gic.hpp"
+#include "timer.hpp"
+#include "utils.hpp"
 #include "virt_console.hpp"
 #include <atomic>
 #include <cstdint>
@@ -118,6 +120,19 @@ void loop() {
     Gic gic(reinterpret_cast<volatile uint8_t *>(0x8000000),
             reinterpret_cast<volatile uint8_t *>(0x80a0000));
     gic.init();
+
+    ArmTimer &timer = ArmTimer::timer;
+    timer.init();
+    timer.enable();
+    timer.set_frequency(1);
+    gic.enable_ppi(27);
+    gic.set_cpu_prio(0xff);
+    gic.enable_irqs();
+
+    write_sysreg(daif, 0x0);
+    asm volatile ("isb" ::: "memory");
+
+    asm volatile("wfi");
 
     abort();
 }

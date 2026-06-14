@@ -1,7 +1,10 @@
 #include "page_alloc.hpp"
 #include "mem.hpp"
+#include <irq/gic.hpp>
 #include <cstddef>
 #include <cstdint>
+#include "timer.hpp"
+#include "virt_console.hpp"
 
 struct esr_t {
     union {
@@ -38,4 +41,14 @@ extern "C" void sexc_handler(void) {
 
     while (should_abort) {
     }
+}
+
+extern "C" void irq_handler(void) {
+    uint32_t irq = Gic::acknowledge();
+    // Gic::interrupt_available();
+    if (irq == 27) {
+        Console::print("Interrupt available\n");
+        ArmTimer::timer.set_frequency(1);
+    }
+    Gic::complete(irq);
 }
