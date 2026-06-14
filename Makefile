@@ -57,7 +57,7 @@ debug: $(TARGET)
 		-device virtconsole,chardev=ch0 \
 		-chardev stdio,id=ch0,mux=on \
 		-mon chardev=ch0,mode=readline \
-		-serial null \
+		-serial chardev:ch0 \
 		-s -S
 emulate: $(TARGET)
 	qemu-system-aarch64 \
@@ -70,7 +70,7 @@ emulate: $(TARGET)
 		-device virtconsole,chardev=ch0 \
 		-chardev stdio,id=ch0,mux=on \
 		-mon chardev=ch0,mode=readline \
-		-serial null
+		-serial chardev:ch0
 else
 debug: $(TARGET)
 	qemu-system-aarch64 \
@@ -83,7 +83,7 @@ debug: $(TARGET)
 		-device virtconsole,chardev=ch0 \
 		-chardev stdio,id=ch0,mux=on \
 		-mon chardev=ch0,mode=readline \
-		-serial null \
+		-serial chardev:ch0 \
 		-s -S
 emulate: $(TARGET)
 	qemu-system-aarch64 \
@@ -96,6 +96,6 @@ emulate: $(TARGET)
 		-device virtconsole,chardev=ch0 \
 		-chardev stdio,id=ch0,mux=on \
 		-mon chardev=ch0,mode=readline \
-		-serial null
+		-serial chardev:ch0
 endif
 

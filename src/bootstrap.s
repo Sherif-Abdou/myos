@@ -50,7 +50,7 @@ __exc_vector:
 .zero 512
 b _sexc_entry
 .zero 0x7C
-b _sexc_entry
+b _exc_entry
 .zero 0x7C
 b _exc_entry
 .zero 512

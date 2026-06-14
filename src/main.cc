@@ -3,12 +3,12 @@
 #include "timer.hpp"
 #include "utils.hpp"
 #include "virt_console.hpp"
-#include <atomic>
 #include <cstdint>
 #include <linked_node.hpp>
 #include <mem.hpp>
 #include <page.hpp>
 #include <page_alloc.hpp>
+#include <print/printk.hpp>
 
 extern "C" void abort();
 
@@ -31,8 +31,6 @@ extern volatile char __exc_vector[];
 }
 
 void build_kernel_pt() {
-    std::atomic_uint32_t integer;
-    integer.fetch_add(1);
     page_allocator.reserve_local_pages();
     page_allocator.alloc_from_start_end(SYMBOL_ADDRESS(__boot_start),
                                         SYMBOL_ADDRESS(__boot_end));
@@ -110,8 +108,11 @@ __attribute__((noinline, used)) void register_exception_handler() {
 }
 void loop() {
     register_exception_handler();
+    early_printk("Setup exception vector.");
     build_kernel_pt();
+    early_printk("Built kernel page table.\n");
     create_heap();
+    early_printk("Built kernel heap.\n");
 
     Console::create_console((volatile uint32_t *)0xFFFFFF800a003e00);
 
@@ -120,6 +121,7 @@ void loop() {
     Gic gic(reinterpret_cast<volatile uint8_t *>(0x8000000),
             reinterpret_cast<volatile uint8_t *>(0x80a0000));
     gic.init();
+    early_printk("Initialized interrupts.\n");
 
     ArmTimer &timer = ArmTimer::timer;
     timer.init();
@@ -129,10 +131,9 @@ void loop() {
     gic.set_cpu_prio(0xff);
     gic.enable_irqs();
 
-    write_sysreg(daif, 0x0);
-    asm volatile ("isb" ::: "memory");
-
-    asm volatile("wfi");
+    write_sysreg(daif, 0x0ULL);
+    asm volatile("isb" ::: "memory");
+    early_printk("Enabling interrupts.\n");
 
     abort();
 }

@@ -5,7 +5,7 @@
 .global _sexc_entry
 
 _sexc_entry:
-    b _exc_wrapper
+    b _sexc_wrapper
 
 _sexc_wrapper:
         stp x0, x1, [sp, #-16]!

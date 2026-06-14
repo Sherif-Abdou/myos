@@ -1,10 +1,12 @@
-#include "page_alloc.hpp"
 #include "mem.hpp"
-#include <irq/gic.hpp>
+#include "page_alloc.hpp"
+#include "print/printk.hpp"
+#include "timer.hpp"
+#include "utils.hpp"
+#include "virt_console.hpp"
 #include <cstddef>
 #include <cstdint>
-#include "timer.hpp"
-#include "virt_console.hpp"
+#include <irq/gic.hpp>
 
 struct esr_t {
     union {
@@ -35,17 +37,29 @@ extern "C" void sexc_handler(void) {
     asm volatile("mrs %0, esr_el1" : "=r"(esr.raw));
 
     // Kernel instruction or data mmu fault
-    if (esr.ec == 0b100001 || esr.ec == 0b100101) {
+    if (esr.ec == 0b000011) {
+        early_printk("Error: Unhandled mcr/mrc fault, aborting.\n");
+    } else if (esr.ec == 0b010101) {
+        early_printk("Error: Unhandled svc trap, aborting.\n");
+    } else if (esr.ec == 0b100001 || esr.ec == 0b100101) {
         should_abort |= handle_kernel_mmu();
+        if (should_abort) {
+            early_printk("Error: Unhandled page fault, aborting.\n");
+        }
+    } else {
+        early_printk("Error: Unhandled exception, 0x", Hex(esr.ec) ," aborting.\n");
     }
+    uint64_t elr;
+    read_sysreg(elr, ELR_EL1);
+    early_printk("Source address: 0x", Hex(elr) ,"\n");
 
     while (should_abort) {
+        asm volatile("wfi");
     }
 }
 
 extern "C" void irq_handler(void) {
     uint32_t irq = Gic::acknowledge();
-    // Gic::interrupt_available();
     if (irq == 27) {
         Console::print("Interrupt available\n");
         ArmTimer::timer.set_frequency(1);
