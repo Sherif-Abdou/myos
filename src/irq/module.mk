@@ -1,1 +1,1 @@
-OBJS += gic.o
+OBJS += gic.o irq.o

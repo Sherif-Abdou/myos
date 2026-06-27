@@ -37,8 +37,6 @@ void early_printk_item(uint64_t number);
 
 void early_printk_item(const char *);
 
-
-
 template<typename ...Args>
 void early_printk(Args... args) {
     ((early_printk_item(args)), ...);

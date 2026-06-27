@@ -1,9 +1,7 @@
+#include "irq/irq.hpp"
 #include "mem.hpp"
-#include "page_alloc.hpp"
 #include "print/printk.hpp"
-#include "timer.hpp"
 #include "utils.hpp"
-#include "virt_console.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <irq/gic.hpp>
@@ -60,9 +58,6 @@ extern "C" void sexc_handler(void) {
 
 extern "C" void irq_handler(void) {
     uint32_t irq = Gic::acknowledge();
-    if (irq == 27) {
-        Console::print("Interrupt available\n");
-        ArmTimer::timer.set_frequency(1);
-    }
+    IsrManager::dispatch(irq);
     Gic::complete(irq);
 }

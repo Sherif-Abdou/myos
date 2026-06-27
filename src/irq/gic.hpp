@@ -1,6 +1,7 @@
 #pragma once
 
 #include "utils.hpp"
+#include <optional>
 #include <cstdint>
 #include <stddef.h>
 
@@ -128,19 +129,22 @@ class Gic {
     VolatileRegion distributor;
     VolatileRegion redistributor;
 
+    static std::optional<Gic*> gic;
+
     void init_distributor();
     void enable_system_registers();
+    void init();
   public:
+    Gic(VolatileRegion distributor, VolatileRegion redistributor);
+    static void create_gic(VolatileRegion distributor, VolatileRegion redistributor);
     enum class IrqType {
         SGI,
         PPI,
         SPI,
     };
-    void init();
-    Gic(VolatileRegion distributor, VolatileRegion redistributor);
 
     static uint64_t interrupt_available();
-    void enable_ppi(uint64_t irqn);
+    static void enable_private_irq(uint64_t irqn);
     static void set_cpu_prio(uint64_t prio);
     static uint32_t acknowledge();
     static void acknowledge(uint64_t irq);

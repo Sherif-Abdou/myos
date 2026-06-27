@@ -1,6 +1,9 @@
 #include "gic.hpp"
+#include "byte_alloc.hpp"
 #include "utils.hpp"
 #include <cstdint>
+
+std::optional<Gic*> Gic::gic = std::nullopt;
 
 void Gic::enable_system_registers() {
     uint64_t sre = bit(0UL);
@@ -24,6 +27,11 @@ void Gic::init_distributor() {
         ;
 }
 
+void Gic::create_gic(VolatileRegion distributor, VolatileRegion redistributor) {
+    gic = {ByteAllocator::kalloc<Gic>(distributor, redistributor)};
+    (*gic)->init();
+}
+
 Gic::Gic(VolatileRegion distributor, VolatileRegion redistributor)
     : distributor(distributor), redistributor(redistributor) {}
 
@@ -40,17 +48,18 @@ uint64_t Gic::interrupt_available() {
     return intid;
 }
 
-void Gic::enable_ppi(uint64_t irqn) {
-    redistributor.writew(~bit(1U), GICR_WAKER);
-    while ((redistributor.readw(GICR_WAKER) & bit(2ul)) != 0);
+void Gic::enable_private_irq(uint64_t irqn) {
+    Gic & gic = *Gic::gic.value();
+    gic.redistributor.writew(~bit(1U), GICR_WAKER);
+    while ((gic.redistributor.readw(GICR_WAKER) & bit(2ul)) != 0);
 
-    redistributor.writew(0x80, 0x10000 + GICD_IPRIORITY(irqn));
-    uint32_t enable = redistributor.readw(0x10000 + GICR_ISENABLER0);
+    gic.redistributor.writew(0x80, 0x10000 + GICD_IPRIORITY(irqn));
+    uint32_t enable = gic.redistributor.readw(0x10000 + GICR_ISENABLER0);
     enable |= bit(irqn);
-    redistributor.writew(enable, 0x10000 + GICR_ISENABLER0);
+    gic.redistributor.writew(enable, 0x10000 + GICR_ISENABLER0);
 
-    uint32_t group = redistributor.readw(0x10000 + GICR_IGROUPR0);
-    redistributor.writew(group | bit(irqn % 32), 0x10000 + GICR_IGROUPR0);
+    uint32_t group = gic.redistributor.readw(0x10000 + GICR_IGROUPR0);
+    gic.redistributor.writew(group | bit(irqn % 32), 0x10000 + GICR_IGROUPR0);
 
 }
 

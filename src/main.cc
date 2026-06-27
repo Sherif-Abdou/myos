@@ -1,5 +1,6 @@
 #include "byte_alloc.hpp"
 #include "irq/gic.hpp"
+#include "irq/irq.hpp"
 #include "timer.hpp"
 #include "utils.hpp"
 #include "virt_console.hpp"
@@ -100,6 +101,15 @@ void create_heap() {
     }
 }
 
+void timer_handle(void* arg) {
+    (void)arg;
+    static unsigned int counter = 0;
+
+    early_printk("timer ", counter, "!\n");
+    counter++;
+    ArmTimer::timer.set_frequency(1);
+}
+
 extern "C" {
 __attribute__((noinline, used)) void register_exception_handler() {
     uintptr_t exception_addr = (uintptr_t)__exc_vector;
@@ -108,7 +118,7 @@ __attribute__((noinline, used)) void register_exception_handler() {
 }
 void loop() {
     register_exception_handler();
-    early_printk("Setup exception vector.");
+    early_printk("Setup exception vector.\n");
     build_kernel_pt();
     early_printk("Built kernel page table.\n");
     create_heap();
@@ -118,22 +128,22 @@ void loop() {
 
     Console::print("Hello world!!!\n");
 
-    Gic gic(reinterpret_cast<volatile uint8_t *>(0x8000000),
+    Gic::create_gic(reinterpret_cast<volatile uint8_t *>(0x8000000),
             reinterpret_cast<volatile uint8_t *>(0x80a0000));
-    gic.init();
     early_printk("Initialized interrupts.\n");
 
     ArmTimer &timer = ArmTimer::timer;
+    IsrManager::register_isr(27, timer_handle);
     timer.init();
     timer.enable();
-    timer.set_frequency(1);
-    gic.enable_ppi(27);
-    gic.set_cpu_prio(0xff);
-    gic.enable_irqs();
+    timer.set_delay(10);
+    Gic::enable_private_irq(27);
+    Gic::set_cpu_prio(0xff);
+    Gic::enable_irqs();
 
+    early_printk("Enabling interrupts.\n");
     write_sysreg(daif, 0x0ULL);
     asm volatile("isb" ::: "memory");
-    early_printk("Enabling interrupts.\n");
 
     abort();
 }
