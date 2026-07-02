@@ -1,0 +1,17 @@
+[package]
+name = "myos"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "myos"
+harness = false
+
+[dependencies]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+

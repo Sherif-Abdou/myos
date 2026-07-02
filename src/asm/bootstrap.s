@@ -1,4 +1,4 @@
-.extern loop
+.extern entry
 
 .section .data.bootstrap.pt, "a"
 .balign 4096
@@ -35,7 +35,7 @@ __enable_mmu:
     isb sy
     msr sctlr_el1, x2
     isb sy
-    ldr x1, =loop 
+    ldr x1, =entry 
     ldr x4, =__stack_start
     mov sp, x4
     blr x1
@@ -44,6 +44,7 @@ __enable_mmu:
 _spin:
     b _spin
 
+/*
 .global __exc_vector
 .balign 2048
 __exc_vector:
@@ -55,3 +56,4 @@ b _exc_entry
 b _exc_entry
 .zero 512
 .zero 512
+*/

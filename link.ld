@@ -46,4 +46,9 @@ SECTIONS
         . += ALIGN(65536, 16);
         __stack_end = .;
       } > KERNEL
+
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.eh_frame_hdr)
+    }
 }

@@ -1,45 +1,13 @@
-include src/module.mk
-
 HOST_OS:=$(shell uname -s)
-ARCH:=arm64
-
-CC:=aarch64-none-elf-gcc
-CXX:=aarch64-none-elf-g++
-OBJCOPY:=aarch64-none-elf-objcopy
-
-DEPFLAGS = -MMD -MP
-
-CXXFLAGS+=-std=c++20
-CXXFLAGS+=-ffreestanding -nostdlib -fno-exceptions -mgeneral-regs-only
-CXXFLAGS+=-march=armv8-a+simd -Wall -Wextra $(DEPFLAGS)
-CXXFLAGS+=-Og -fno-inline -g
-
-LDFLAGS:=-std=c++20 -ffreestanding -nostdlib -mgeneral-regs-only -T link.ld
-INCLUDES:=src/
-
-OBJDIR:=build
 TARGET:=build/myos
+OS_PATH:=target/aarch64-unknown-none-softfloat/debug/myos
 
 .PHONY: all clean
-vpath %.cc src/
-vpath %.s src/
-
-OBJDIRS:=$(addprefix $(OBJDIR)/, $(sort $(dir $(OBJS))))
--include $(OBJS:.o=.d)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) link.ld | $(OBJDIRS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(addprefix $(OBJDIR)/, $(OBJS)) -o $@ -lgcc
-
-%.o: %.cc | $(OBJDIRS)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o build/$@ -lgcc
-
-%.o: %.s | $(OBJDIRS)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDES) -c $< -o build/$@  -lgcc
-
-$(OBJDIRS):
-	mkdir -p $@
+$(TARGET):
+	cargo b
 
 clean:
 	rm -rf build/
@@ -50,7 +18,7 @@ debug: $(TARGET)
 	qemu-system-aarch64 \
 		-M virt,accel=hvf,gic-version=3 -cpu host -smp 1 -m 1G \
 		-display none \
-		-kernel build/myos \
+		-kernel $(OS_PATH) \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
@@ -63,7 +31,7 @@ emulate: $(TARGET)
 	qemu-system-aarch64 \
 		-M virt,accel=hvf,gic-version=3 -cpu host -smp 1 -m 1G \
 		-display none \
-		-kernel build/myos \
+		-kernel $(OS_PATH) \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
@@ -76,7 +44,7 @@ debug: $(TARGET)
 	qemu-system-aarch64 \
 		-M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 1G \
 		-display none \
-		-kernel build/myos \
+		-kernel $(OS_PATH) \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
@@ -89,7 +57,7 @@ emulate: $(TARGET)
 	qemu-system-aarch64 \
 		-M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 1G \
 		-display none \
-		-kernel build/myos \
+		-kernel $(OS_PATH) \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
