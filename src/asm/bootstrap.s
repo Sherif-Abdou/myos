@@ -1,6 +1,10 @@
 .extern entry
 
 .section .data.bootstrap.pt, "a"
+.global __dtb_addr
+__dtb_addr:
+    .quad 0x0
+
 .balign 4096
 __initial_pt1:
     .quad 0x00000401

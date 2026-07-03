@@ -1,9 +1,9 @@
 use core::{
-    alloc::{GlobalAlloc, Layout},
+    alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     ptr::{NonNull, null_mut},
 };
 
-use crate::utils::CoreLock;
+use crate::{allocators::align_up, utils::CoreLock};
 
 struct LLHole {
     size: usize,
@@ -87,9 +87,7 @@ impl LLAllocator {
             (*first_hole).next = core::ptr::null_mut();
         }
 
-        Self {
-            first_hole,
-        }
+        Self { first_hole }
     }
 
     fn cursor(&mut self) -> LLCursor {
@@ -101,12 +99,8 @@ impl LLAllocator {
     }
 }
 
-const fn align_up(addr: usize, align: usize) -> usize {
-    (addr + align - 1) & !(align - 1)
-}
-
-unsafe impl GlobalAlloc for CoreLock<LLAllocator> {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+unsafe impl Allocator for CoreLock<LLAllocator> {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let necessary_alignment = align_of::<LLHole>().max(layout.align());
         let hole_alignment = align_of::<LLHole>();
         let mut locked = self.lock();
@@ -149,7 +143,10 @@ unsafe impl GlobalAlloc for CoreLock<LLAllocator> {
                     cursor.remove();
                 }
 
-                return ptr_addr as *mut u8;
+                return Ok(NonNull::slice_from_raw_parts(
+                    NonNull::new(ptr_addr as *mut u8).ok_or(AllocError)?,
+                    layout.size(),
+                ));
             }
 
             unsafe {
@@ -157,27 +154,27 @@ unsafe impl GlobalAlloc for CoreLock<LLAllocator> {
             }
         }
 
-        null_mut()
+        Err(AllocError)
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
         let mut locked = self.lock();
 
-        let ll_header = unsafe { ptr.byte_sub(size_of::<LLHeader>()) } as *mut LLHeader;
+        let ll_header = unsafe { ptr.byte_sub(size_of::<LLHeader>()) }.cast::<LLHeader>();
         let mut cursor = locked.cursor();
 
         let hole_size = unsafe {
-            ((*ll_header).region_end as usize) - ((*ll_header).region_start as usize)
+            (ll_header.read().region_end as usize) - (ll_header.read().region_start as usize)
         };
 
         // Replace the allocation header with a hole.
-        let ll_hole = ll_header as *mut LLHole;
+        let ll_hole: NonNull<LLHole> = ll_header.cast();
         unsafe {
-            (*ll_hole).size = hole_size;
-            (*ll_hole).next = core::ptr::null_mut();
+            ll_hole.read().size = hole_size;
+            ll_hole.read().next = core::ptr::null_mut();
         }
 
-        let ll_hole_addr = ll_hole as usize;
+        let ll_hole_addr = ll_hole.addr().get();
 
         // Insert the hole into the linked list.
         unsafe {
@@ -186,7 +183,7 @@ unsafe impl GlobalAlloc for CoreLock<LLAllocator> {
                 cursor.next();
             }
             // Insert hole.
-            cursor.insert(ll_hole);
+            cursor.insert(ll_hole.as_ptr());
             // Move cursor to inserted hole.
             cursor.next();
         }

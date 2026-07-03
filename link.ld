@@ -7,7 +7,7 @@ MEMORY {
 
 SECTIONS
 {
-
+    __kernel_start = .;
     .boot : {
         __boot_start = .;
         *(.text.bootstrap .text.bootstrap.*);
@@ -33,6 +33,7 @@ SECTIONS
         *(.rodata .rodata.*);
         __rodata_end = .;
     } > KERNEL AT> PHYSICAL
+    __kernel_end = .;
 
     .bss (NOLOAD) : ALIGN(4096) {
         __bss_start = .;
@@ -47,8 +48,17 @@ SECTIONS
         __stack_end = .;
       } > KERNEL
 
+      .heap (NOLOAD) : ALIGN(4096)
+      {
+        __heap_start = .;
+        . += ALIGN(16384, 16);
+        __heap_end = .;
+      } > KERNEL
+
     /DISCARD/ : {
         *(.eh_frame)
         *(.eh_frame_hdr)
     }
 }
+
+__kernel_size = __kernel_end - __kernel_start;

@@ -1,16 +1,24 @@
 #![no_std]
 #![no_main]
+#![feature(allocator_api)]
 
-mod alloc;
+mod allocators;
 mod arm_pl;
+mod dtb;
 mod linker_symbols;
 mod utils;
 
+extern crate alloc;
+
 use core::{
-    alloc::{GlobalAlloc, Layout}, arch::{asm, global_asm}, panic::PanicInfo,
+    arch::{asm, global_asm},
+    panic::PanicInfo,
+    ptr::NonNull,
 };
 
-use crate::{alloc::LLAllocator, utils::CoreLock};
+use crate::{
+    allocators::BumpAllocator, dtb::Fdt, utils::{CoreLock, LazyCoreLock},
+};
 
 global_asm!(include_str!("asm/bootstrap.s"));
 
@@ -29,13 +37,7 @@ fn panic(info: &PanicInfo) -> ! {
 extern "C" fn entry() {
     early_printk!("Hello kernel\n");
 
-    let allocator = CoreLock::new(LLAllocator::new(0xffffff80_48000000usize as _, 4096 * 10));
-    let a = unsafe { allocator.alloc(Layout::new::<usize>()) };
-    let b = unsafe { allocator.alloc(Layout::new::<u64>()) };
-    let c = unsafe { allocator.alloc(Layout::new::<u32>()) };
-
-    unsafe { allocator.dealloc(a, Layout::new::<usize>()) };
-
+    let _fdt = Fdt::from_boot();
 
     panic!("It's joever");
 }
