@@ -37,7 +37,15 @@ fn panic(info: &PanicInfo) -> ! {
 extern "C" fn entry() {
     early_printk!("Hello kernel\n");
 
-    let _fdt = Fdt::from_boot();
+    let fdt = Fdt::from_boot();
 
-    panic!("It's joever");
+    for node in fdt.nodes().flat_map(|node| node.children()) {
+        if node.name() == "chosen" {
+            for prop in node.properties() {
+                early_printk!("Chosen contains: {}\n", prop.name());
+            }
+        }
+    }
+
+    panic!("Done.");
 }

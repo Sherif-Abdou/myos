@@ -3,7 +3,7 @@
 .section .data.bootstrap.pt, "a"
 .global __dtb_addr
 __dtb_addr:
-    .quad 0x0
+    .quad 0xffffff8040000000
 
 .balign 4096
 __initial_pt1:

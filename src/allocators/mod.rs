@@ -27,14 +27,14 @@ pub use bump::BumpAllocator;
 use crate::utils::{CoreLock, LazyCoreLock};
 
 unsafe extern "C" {
-    pub unsafe static __heap_start: usize;
-    pub unsafe static __heap_end: usize;
+    pub unsafe static mut __heap_start: u8;
+    pub unsafe static mut __heap_end: u8;
 }
 
 pub static BUMP_ALLOCATOR: LazyCoreLock<CoreLock<BumpAllocator>> = LazyCoreLock::new(|| {
     CoreLock::new(BumpAllocator::new(
-        NonNull::new(unsafe { __heap_start as _ }).unwrap(),
-        NonNull::new(unsafe { __heap_end as _ }).unwrap(),
+        NonNull::new(unsafe { (&raw mut __heap_start) as _ }).unwrap(),
+        NonNull::new(unsafe { (&raw mut __heap_end) as _ }).unwrap(),
     ))
 });
 

@@ -51,8 +51,8 @@ impl FtdHeader {
     }
 }
 
-struct FtdProp {
-    name: &'static CStr,
+pub struct FtdProp {
+    name: &'static str,
     value: Option<NonNull<[u8]>>,
 }
 
@@ -61,14 +61,17 @@ impl FtdProp {
         assert_eq!(unsafe { cursor.read().swap_bytes() }, 0x3);
         *cursor = unsafe { cursor.offset(1) };
 
-        let len = unsafe { cursor.read() };
+        let len = unsafe { cursor.read().swap_bytes() };
         *cursor = unsafe { cursor.offset(1) };
 
-        let name_offset = unsafe { cursor.read() };
+        let name_offset = unsafe { cursor.read().swap_bytes() };
         *cursor = unsafe { cursor.offset(1) };
 
-        let name: &'static CStr =
-            unsafe { CStr::from_ptr(strings.offset(name_offset as isize).as_ptr()) };
+        let name: &'static str = unsafe {
+            CStr::from_ptr(strings.offset(name_offset as isize).as_ptr())
+                .to_str()
+                .unwrap()
+        };
 
         if len > 0 {
             let words = len.div_ceil(4);
@@ -81,23 +84,42 @@ impl FtdProp {
             Self { value: None, name }
         }
     }
+
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
 }
 
-struct FdtNode {
+pub struct FdtNode {
+    name: Option<&'static str>,
     properties: LinkedList<FtdProp, &'static CoreLock<BumpAllocator>>,
     children: LinkedList<FdtNode, &'static CoreLock<BumpAllocator>>,
 }
 
 impl FdtNode {
+    pub fn name(&self) -> &'static str {
+        self.name.unwrap_or("")
+    }
+
     pub fn parse(cursor: &mut NonNull<u32>, strings: NonNull<u8>) -> Self {
         assert_eq!(unsafe { cursor.read().swap_bytes() }, 0x1);
         *cursor = unsafe { cursor.offset(1) };
+        let mut name = None;
+        if unsafe { cursor.read().swap_bytes() } != 0x0 {
+            let cstr = unsafe { CStr::from_ptr(cursor.cast().as_ptr()) };
+            let len = cstr.count_bytes() + 1;
+            let jump = len.div_ceil(4);
+            name = Some(cstr.to_str().unwrap());
+            *cursor = unsafe { cursor.offset(jump as isize) };
+        } else {
+            *cursor = unsafe { cursor.offset(1) };
+        }
 
         let mut properties = LinkedList::new_in(BUMP_ALLOCATOR.get());
         let mut children = LinkedList::new_in(BUMP_ALLOCATOR.get());
 
-        while unsafe { cursor.read() } != 0x2 {
-            match unsafe { cursor.read() } {
+        while unsafe { cursor.read().swap_bytes() } != 0x2 {
+            match unsafe { cursor.read().swap_bytes() } {
                 0x1 => {
                     children.push_back(FdtNode::parse(cursor, strings));
                 }
@@ -110,17 +132,27 @@ impl FdtNode {
                 _ => panic!("Unknown pattern."),
             }
         }
+        *cursor = unsafe { cursor.offset(1) };
 
         Self {
+            name,
             properties,
             children,
         }
+    }
+
+    pub fn properties(&self) -> impl Iterator<Item = &FtdProp> {
+        self.properties.iter()
+    }
+
+    pub fn children(&self) -> impl Iterator<Item = &FdtNode> {
+        self.children.iter()
     }
 }
 
 pub struct Fdt {
     header: FtdHeader,
-    nodes: FdtNode,
+    nodes: LinkedList<FdtNode, &'static CoreLock<BumpAllocator>>,
 }
 
 unsafe extern "C" {
@@ -133,19 +165,23 @@ impl Fdt {
 
         let strings = unsafe { start.byte_offset(header.off_dt_string as isize) };
         let structs = unsafe { start.byte_offset(header.off_dt_struct as isize) };
-        let mut cursor = structs.cast();
+        let mut cursor: NonNull<u32> = structs.cast();
 
-        let node = FdtNode::parse(&mut cursor, strings);
-
-        Self {
-            header,
-            nodes: node,
+        let mut nodes = LinkedList::new_in(BUMP_ALLOCATOR.get());
+        while unsafe { cursor.read().swap_bytes() != 0x09 } {
+            nodes.push_back(FdtNode::parse(&mut cursor, strings));
         }
+
+        Self { header, nodes }
     }
 
     pub fn from_boot() -> Self {
         let start = NonNull::new(unsafe { __dtb_addr as _ }).unwrap();
 
         Self::parse(start)
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = &FdtNode> {
+        self.nodes.iter()
     }
 }
