@@ -1,26 +1,30 @@
-use core::fmt::Write;
+use core::{fmt::Write, ptr::NonNull};
 
-use crate::utils::CoreLock;
+use crate::{dtb::FdtNode, utils::CoreLock};
 
-const ARMPL_BASE: *mut u8 = 0x9000000 as _;
+pub static ARM_PL: CoreLock<ArmPl> = CoreLock::new(ArmPl { ptr: None });
 
-pub static ARM_PL: CoreLock<ArmPl> = CoreLock::new(ArmPl {});
-
-fn putchar_early(c: char) {
-    while unsafe { ARMPL_BASE.byte_offset(0x18).read_volatile() } & (1 << 5) != 0 {}
-
-    unsafe { ARMPL_BASE.write_volatile(c as u8) };
+pub struct ArmPl {
+    ptr: Option<NonNull<u8>>,
 }
-
-pub struct ArmPl {}
 
 unsafe impl Send for ArmPl {}
 unsafe impl Sync for ArmPl {}
 
 impl ArmPl {
     pub fn early_printk_str(&self, s: &str) {
-        for c in s.chars() {
-            putchar_early(c);
+        if self.ptr.is_some() {
+            for c in s.chars() {
+                self.early_putchar(c);
+            }
+        }
+    }
+
+    pub fn early_putchar(&self, c: char) {
+        if let Some(ptr) = self.ptr {
+            while unsafe { ptr.byte_offset(0x18).read_volatile() } & (1 << 5) != 0 {}
+
+            unsafe { ptr.write_volatile(c as u8) };
         }
     }
 }
@@ -35,7 +39,20 @@ impl Write for ArmPl {
 #[macro_export]
 macro_rules! early_printk {
     ($($x:expr),*) => {
+        {
         use ::core::fmt::Write;
         let _ = ::core::write!($crate::arm_pl::ARM_PL.lock(), $($x,)*);
+        }
     };
+}
+
+pub fn init_from_dtb_node(node: &FdtNode) {
+    for property in node.properties() {
+        if property.name() == "reg" {
+            let phys_addr = property.read_u64().unwrap() | 0xffffff8000000000;
+
+            ARM_PL.lock().ptr = Some(NonNull::new(phys_addr as _).unwrap());
+        }
+    }
+    early_printk!("Early console initialized.\n");
 }

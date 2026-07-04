@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use alloc::alloc::{AllocError, Allocator};
 
-use crate::utils::CoreLock;
+use crate::{early_printk, utils::CoreLock};
 
 pub struct BumpAllocator {
     current: NonNull<u8>,
@@ -23,6 +23,8 @@ unsafe impl Allocator for CoreLock<BumpAllocator> {
         &self,
         layout: core::alloc::Layout,
     ) -> Result<core::ptr::NonNull<[u8]>, alloc::alloc::AllocError> {
+        assert!(layout.align() != 0);
+
         let mut inner = self.lock();
         let start_addr = unsafe {
             inner
@@ -41,6 +43,5 @@ unsafe impl Allocator for CoreLock<BumpAllocator> {
     }
 
     // Deallocation as a concept does not exist. The entire bump allocator must be cleared at once.
-    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-    }
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {}
 }

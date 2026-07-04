@@ -40,7 +40,7 @@ impl<T> CoreLock<T> {
         self.save_daif();
 
         CoreLockGuard {
-            inner: unsafe { NonNull::new_unchecked(self.inner.get()) },
+            inner: NonNull::new(self.inner.get()).unwrap(),
             lock: self,
         }
     }

@@ -1,4 +1,0 @@
-
-struct Box<T> {
-
-}

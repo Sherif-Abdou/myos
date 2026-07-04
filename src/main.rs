@@ -13,17 +13,15 @@ extern crate alloc;
 use core::{
     arch::{asm, global_asm},
     panic::PanicInfo,
-    ptr::NonNull,
 };
 
-use crate::{
-    allocators::BumpAllocator, dtb::Fdt, utils::{CoreLock, LazyCoreLock},
-};
+use crate::{arm_pl::init_from_dtb_node, dtb::{Fdt, find_earlyconsole_node}};
 
 global_asm!(include_str!("asm/bootstrap.s"));
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    early_printk!("PANIC\n");
     if let Some(message) = info.message().as_str() {
         early_printk!("{}\n", message);
     }
@@ -35,17 +33,12 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 extern "C" fn entry() {
-    early_printk!("Hello kernel\n");
-
     let fdt = Fdt::from_boot();
+    let earlyconsole_node = find_earlyconsole_node(&fdt);
+    init_from_dtb_node(earlyconsole_node);
 
-    for node in fdt.nodes().flat_map(|node| node.children()) {
-        if node.name() == "chosen" {
-            for prop in node.properties() {
-                early_printk!("Chosen contains: {}\n", prop.name());
-            }
-        }
+    early_printk!("Done.\n");
+    loop {
+        unsafe { asm!("wfe") };
     }
-
-    panic!("Done.");
 }

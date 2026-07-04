@@ -40,7 +40,7 @@ __enable_mmu:
     msr sctlr_el1, x2
     isb sy
     ldr x1, =entry 
-    ldr x4, =__stack_start
+    ldr x4, =__stack_end
     mov sp, x4
     blr x1
     b _spin
