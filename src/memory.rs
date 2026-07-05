@@ -1,15 +1,11 @@
 use core::ptr;
 
-use crate::{
-    dtb::{Fdt, FdtNode},
-    early_printk,
-    utils::SpinLock,
-};
+use crate::{dtb::FdtNode, early_printk, utils::SpinLock};
 
 /// Page number
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-struct Pfn(usize);
+pub struct Pfn(usize);
 
 impl Pfn {
     pub const fn from_virt_addr(virt: usize) -> Self {
@@ -24,6 +20,10 @@ impl Pfn {
 
     pub const fn number(&self) -> usize {
         self.0
+    }
+
+    pub const fn as_ptr(&self) -> *mut u8 {
+        ((self.0 * PAGE_SIZE) | 0xffffff80_00000000) as *mut u8
     }
 }
 
@@ -44,7 +44,7 @@ pub const PAGE_SIZE: usize = 1 << PAGE_SHIFT;
 
 const BITMASK_ELEMENT_SIZE: usize = core::mem::size_of::<u64>();
 
-struct PageAllocator<'a> {
+pub struct PageAllocator<'a> {
     bitmask: &'a mut [u64],
     offset: usize,
 }
@@ -94,17 +94,17 @@ impl PageAllocator<'_> {
             let index = page / BITMASK_ELEMENT_SIZE;
             let offset = page % BITMASK_ELEMENT_SIZE;
 
-            self.bitmask[index] |= !(1 << offset);
+            self.bitmask[index] &= !(1 << offset);
         }
 
         effective_count
     }
 
     pub fn reserve_pages(&mut self, count: usize) -> Option<Pfn> {
-        let mut region_start = 0;
+        let mut region_start = self.offset;
         let mut region_size = 0;
 
-        for page in 0..(self.bitmask.len() * BITMASK_ELEMENT_SIZE) {
+        for page in self.offset..(self.offset + self.bitmask.len() * BITMASK_ELEMENT_SIZE) {
             if self.is_free(page.into()) {
                 region_size += 1;
             } else {
@@ -130,7 +130,7 @@ unsafe extern "C" {
 const DTB_LEN: usize = 0x10_0000;
 static mut DUMMY: [u64; 1] = [0; 1];
 
-static PAGE_ALLOCATOR: SpinLock<PageAllocator> = SpinLock::new(PageAllocator {
+pub static PAGE_ALLOCATOR: SpinLock<PageAllocator> = SpinLock::new(PageAllocator {
     #[allow(static_mut_refs)]
     bitmask: unsafe { &mut DUMMY },
     offset: 0,

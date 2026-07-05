@@ -16,11 +16,14 @@ use core::{
     panic::PanicInfo,
 };
 
+use alloc::boxed::Box;
+
 use crate::{
+    allocators::LLAllocator,
     arm_pl::init_from_dtb_node,
     dtb::{Fdt, find_earlyconsole_node},
-    memory::init_allocator,
-    utils::cpu_id,
+    memory::{PAGE_ALLOCATOR, init_allocator},
+    utils::{SpinLock, cpu_id},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -37,6 +40,8 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
+static BIG_ALLOCATOR: SpinLock<LLAllocator> = SpinLock::new(LLAllocator::new());
+
 #[unsafe(no_mangle)]
 extern "C" fn entry() {
     let fdt = Fdt::from_boot();
@@ -52,7 +57,11 @@ extern "C" fn entry() {
 
     init_allocator(memory);
 
-    early_printk!("CPU id: {:x}.\n", cpu_id());
+    let pages = PAGE_ALLOCATOR.lock().reserve_pages(24);
+
+    let data = Box::<[u8; 5000], &'static SpinLock<LLAllocator>>::new_uninit_in(&BIG_ALLOCATOR);
+
+    early_printk!("Heap pages: {:?}\n", pages);
     early_printk!("Done.\n");
     loop {
         unsafe { asm!("wfe") };

@@ -1,7 +1,7 @@
-mod free_list;
+mod ll;
 use core::ptr::NonNull;
 
-pub use free_list::LLAllocator;
+pub use ll::LLAllocator;
 
 struct FakeAllocator;
 

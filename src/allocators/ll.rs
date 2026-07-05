@@ -1,9 +1,13 @@
 use core::{
-    alloc::{AllocError, Allocator, GlobalAlloc, Layout},
-    ptr::{NonNull, null_mut},
+    alloc::{AllocError, Allocator, Layout},
+    ptr::NonNull,
 };
 
-use crate::{allocators::align_up, utils::CoreLock};
+use crate::{
+    allocators::align_up,
+    memory::{PAGE_ALLOCATOR, PAGE_SIZE},
+    utils::SpinLock,
+};
 
 struct LLHole {
     size: usize,
@@ -80,14 +84,8 @@ pub struct LLAllocator {
 }
 
 impl LLAllocator {
-    pub fn new(start: *mut u8, size: usize) -> Self {
-        let first_hole = start as *mut LLHole;
-        unsafe {
-            (*first_hole).size = size;
-            (*first_hole).next = core::ptr::null_mut();
-        }
-
-        Self { first_hole }
+    pub const fn new() -> Self {
+        Self { first_hole: core::ptr::null_mut() }
     }
 
     fn cursor(&mut self) -> LLCursor {
@@ -97,9 +95,37 @@ impl LLAllocator {
             hole: self.first_hole,
         }
     }
+
+    fn claim_more_memory(&mut self, size_hint: usize) {
+        let pages = (size_hint.div_ceil(PAGE_SIZE) + 1).max(8);
+        let block = PAGE_ALLOCATOR.lock().reserve_pages(pages).unwrap();
+        let ll_hole: *mut LLHole = block.as_ptr().cast();
+        let ll_hole_addr = ll_hole.addr();
+        unsafe {
+            (*ll_hole).size = 8 * PAGE_SIZE;
+            (*ll_hole).next = core::ptr::null_mut();
+        }
+        let mut cursor = self.cursor();
+
+        unsafe {
+            if cursor.is_null() || cursor.get_raw().addr() > ll_hole_addr {
+                (*ll_hole).next = self.first_hole;
+                self.first_hole = ll_hole;
+            } else {
+                // Find furthest hole before target address.
+                while !cursor.is_null() && cursor.get_next().addr() < ll_hole_addr {
+                    cursor.next();
+                }
+                // Insert hole.
+                cursor.insert(ll_hole);
+                // Move cursor to inserted hole.
+                cursor.next();
+            }
+        }
+    }
 }
 
-unsafe impl Allocator for CoreLock<LLAllocator> {
+unsafe impl Allocator for SpinLock<LLAllocator> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let necessary_alignment = align_of::<LLHole>().max(layout.align());
         let hole_alignment = align_of::<LLHole>();
@@ -133,7 +159,7 @@ unsafe impl Allocator for CoreLock<LLAllocator> {
                     }
                     let ll_hole = ptr_end as *mut LLHole;
                     unsafe {
-                        (*ll_hole).size = end_hole_addr - ptr_end - size_of::<LLHole>();
+                        (*ll_hole).size = end_hole_addr - ptr_end;
                         cursor.insert(ll_hole);
                     }
                 }
@@ -154,7 +180,9 @@ unsafe impl Allocator for CoreLock<LLAllocator> {
             }
         }
 
-        Err(AllocError)
+        locked.claim_more_memory(layout.size());
+        drop(locked);
+        self.allocate(layout)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
@@ -170,22 +198,29 @@ unsafe impl Allocator for CoreLock<LLAllocator> {
         // Replace the allocation header with a hole.
         let ll_hole: NonNull<LLHole> = ll_header.cast();
         unsafe {
-            ll_hole.read().size = hole_size;
-            ll_hole.read().next = core::ptr::null_mut();
+            (*ll_hole.as_ptr()).size = hole_size;
+            (*ll_hole.as_ptr()).next = core::ptr::null_mut();
         }
 
         let ll_hole_addr = ll_hole.addr().get();
 
         // Insert the hole into the linked list.
         unsafe {
-            // Find furthest hole before target address.
-            while !cursor.is_null() && cursor.get_next().addr() < ll_hole_addr {
+            if cursor.get_raw().addr() > ll_hole_addr {
+                (*ll_hole.as_ptr()).next = locked.first_hole;
+                locked.first_hole = ll_hole.as_ptr();
+
+                cursor = locked.cursor();
+            } else {
+                // Find furthest hole before target address.
+                while !cursor.is_null() && cursor.get_next().addr() < ll_hole_addr {
+                    cursor.next();
+                }
+                // Insert hole.
+                cursor.insert(ll_hole.as_ptr());
+                // Move cursor to inserted hole.
                 cursor.next();
             }
-            // Insert hole.
-            cursor.insert(ll_hole.as_ptr());
-            // Move cursor to inserted hole.
-            cursor.next();
         }
 
         unsafe {
