@@ -7,14 +7,13 @@ MEMORY {
 
 SECTIONS
 {
-    __kernel_start = .;
     .boot : {
         __boot_start = .;
         *(.text.bootstrap .text.bootstrap.*);
         *(.data.bootstrap .data.bootstrap.*);
         __boot_end = .;
     } > KERNEL AT> PHYSICAL
-
+    __kernel_start = ADDR(.boot);
 
     .text : ALIGN(4096) {
         __text_start = .;
@@ -54,6 +53,8 @@ SECTIONS
         . += ALIGN(16384, 16);
         __heap_end = .;
       } > KERNEL
+
+      __kernel_end = .;
 
     /DISCARD/ : {
         *(.eh_frame)

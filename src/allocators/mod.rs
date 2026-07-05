@@ -37,4 +37,3 @@ pub static BUMP_ALLOCATOR: LazyCoreLock<CoreLock<BumpAllocator>> = LazyCoreLock:
         NonNull::new(unsafe { (&raw mut __heap_end) as _ }).unwrap(),
     ))
 });
-

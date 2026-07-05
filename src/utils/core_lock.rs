@@ -7,6 +7,8 @@ use core::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
 };
 
+use crate::utils::cpu_id;
+
 pub struct CoreLock<T> {
     inner: UnsafeCell<T>,
     state: AtomicU64,
@@ -37,6 +39,8 @@ impl<T> CoreLock<T> {
     }
 
     pub fn lock(&self) -> CoreLockGuard<'_, T> {
+        // This lock is only safe on Core 0. Do not allow other cores to acquire this lock.
+        assert_eq!(cpu_id(), 0);
         self.save_daif();
 
         CoreLockGuard {
@@ -51,6 +55,9 @@ impl<T> CoreLock<T> {
             asm!("mrs {x}, daif", x = out(reg) x);
         };
         self.state.store(x, core::sync::atomic::Ordering::Relaxed);
+        unsafe {
+            asm!("msr daifset, #0b0010");
+        };
     }
 
     fn restore_daif(&self) {
@@ -104,10 +111,12 @@ impl<T, F: Fn() -> T> LazyCoreLock<T, F> {
         }
     }
 
-    pub fn get<'a>(&'a self) -> &'a T {
+    pub fn get(&self) -> &T {
         if !self.initialized.load(Relaxed) {
-            unsafe { self.inner.get().write(MaybeUninit::new((self.f)())) }
-            self.initialized.store(true, Relaxed);
+            with_core_critical_section(|| {
+                unsafe { self.inner.get().write(MaybeUninit::new((self.f)())) }
+                self.initialized.store(true, Relaxed);
+            });
         }
         unsafe { self.inner.get().as_ref().unwrap().assume_init_ref() }
     }

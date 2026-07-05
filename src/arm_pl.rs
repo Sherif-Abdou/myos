@@ -49,7 +49,7 @@ macro_rules! early_printk {
 pub fn init_from_dtb_node(node: &FdtNode) {
     for property in node.properties() {
         if property.name() == "reg" {
-            let phys_addr = property.read_u64().unwrap() | 0xffffff8000000000;
+            let phys_addr = property.read_u64(0).unwrap() | 0xffffff8000000000;
 
             ARM_PL.lock().ptr = Some(NonNull::new(phys_addr as _).unwrap());
         }

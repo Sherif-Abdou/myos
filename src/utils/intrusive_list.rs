@@ -211,7 +211,7 @@ pub struct List<T: LinkedNode<N>, const N: usize = 0> {
 }
 
 impl<T: LinkedNode<N>, const N: usize> List<T, N> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             head: ListLinks::new(),
             _phantom: PhantomData,

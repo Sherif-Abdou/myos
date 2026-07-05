@@ -99,15 +99,33 @@ impl FdtProp {
         })
     }
 
-    pub fn read_u32(&self) -> Option<u32> {
-        self.value
-            .map(|ptr| unsafe { ptr.as_ptr().cast::<u32>().read().swap_bytes() })
+    pub fn read_u32(&self, index: usize) -> Option<u32> {
+        self.value.map(|ptr| unsafe {
+            ptr.as_ptr()
+                .cast::<u32>()
+                .offset(index as isize)
+                .read()
+                .swap_bytes()
+        })
     }
 
-    pub fn read_u64(&self) -> Option<u64> {
+    pub fn read_u64(&self, index: usize) -> Option<u64> {
+        let base_offset = 2 * index as isize;
         self.value.map(|ptr| {
-            let upper = unsafe { ptr.as_ptr().cast::<u32>().read().swap_bytes() } as u64;
-            let lower = unsafe { ptr.as_ptr().cast::<u32>().offset(1).read().swap_bytes() } as u64;
+            let upper = unsafe {
+                ptr.as_ptr()
+                    .cast::<u32>()
+                    .offset(base_offset)
+                    .read()
+                    .swap_bytes()
+            } as u64;
+            let lower = unsafe {
+                ptr.as_ptr()
+                    .cast::<u32>()
+                    .offset(base_offset + 1)
+                    .read()
+                    .swap_bytes()
+            } as u64;
 
             (upper << 32) | lower
         })
