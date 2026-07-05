@@ -8,6 +8,7 @@ mod dtb;
 mod linker_symbols;
 mod memory;
 mod utils;
+mod gic;
 
 extern crate alloc;
 
@@ -19,7 +20,7 @@ use core::{
 use alloc::boxed::Box;
 
 use crate::{
-    allocators::LLAllocator,
+    allocators::{KERNEL_ALLOCATOR, LLAllocator},
     arm_pl::init_from_dtb_node,
     dtb::{Fdt, find_earlyconsole_node},
     memory::{PAGE_ALLOCATOR, init_allocator},
@@ -40,8 +41,6 @@ fn panic(info: &PanicInfo) -> ! {
     }
 }
 
-static BIG_ALLOCATOR: SpinLock<LLAllocator> = SpinLock::new(LLAllocator::new());
-
 #[unsafe(no_mangle)]
 extern "C" fn entry() {
     let fdt = Fdt::from_boot();
@@ -59,9 +58,11 @@ extern "C" fn entry() {
 
     let pages = PAGE_ALLOCATOR.lock().reserve_pages(24);
 
-    let data = Box::<[u8; 5000], &'static SpinLock<LLAllocator>>::new_uninit_in(&BIG_ALLOCATOR);
+    let data = unsafe {
+        Box::<[u8; 5000], &'static SpinLock<LLAllocator>>::new_zeroed_in(&KERNEL_ALLOCATOR)
+            .assume_init()
+    };
 
-    early_printk!("Heap pages: {:?}\n", pages);
     early_printk!("Done.\n");
     loop {
         unsafe { asm!("wfe") };

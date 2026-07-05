@@ -53,6 +53,16 @@ impl LLCursor {
         }
     }
 
+    unsafe fn remove_next(&mut self) {
+        if self.hole.is_null() || unsafe { self.get_next().is_null() } {
+            return;
+        }
+        unsafe {
+            let next = self.get_next();
+            (*self.hole).next = (*next).next;
+        }
+    }
+
     // Inserts `ptr` right after the cursor.
     unsafe fn insert(&mut self, ptr: *mut LLHole) {
         assert!(!ptr.is_null());
@@ -85,7 +95,9 @@ pub struct LLAllocator {
 
 impl LLAllocator {
     pub const fn new() -> Self {
-        Self { first_hole: core::ptr::null_mut() }
+        Self {
+            first_hole: core::ptr::null_mut(),
+        }
     }
 
     fn cursor(&mut self) -> LLCursor {
@@ -233,6 +245,16 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
             {
                 (*cursor.get_previous()).size += cursor.get().unwrap().size;
                 cursor.remove();
+            }
+
+            // If next hole is immediately after current hole,
+            // coalesce into current hole.
+            while !cursor.is_null()
+                && !cursor.get_next().is_null()
+                && cursor.get_next().addr() == cursor.get_raw().addr() + (*cursor.get_raw()).size
+            {
+                (*cursor.get_raw()).size += (*cursor.get_next()).size;
+                cursor.remove_next();
             }
         }
     }

@@ -137,13 +137,8 @@ pub static PAGE_ALLOCATOR: SpinLock<PageAllocator> = SpinLock::new(PageAllocator
 });
 
 pub fn init_allocator(memory: &FdtNode) {
-    let reg_prop = memory
-        .properties()
-        .find(|prop| prop.name() == "reg")
-        .unwrap();
-
-    let memory_start = reg_prop.read_u64(0).unwrap() as usize;
-    let memory_size = reg_prop.read_u64(1).unwrap() as usize;
+    let memory_start = memory.read_u64("reg", 0).unwrap() as usize;
+    let memory_size = memory.read_u64("reg", 1).unwrap() as usize;
 
     early_printk!(
         "Memory region: 0x{:x}-0x{:x}\n",

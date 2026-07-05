@@ -1,10 +1,10 @@
-use core::{ffi::CStr, pin::Pin, ptr::NonNull};
+use core::{ffi::CStr, ptr::NonNull};
 
 use alloc::collections::LinkedList;
 
 use crate::{
     allocators::{BUMP_ALLOCATOR, BumpAllocator},
-    utils::{CoreLock, LinkedNode},
+    utils::CoreLock,
 };
 
 #[derive(Debug)]
@@ -210,6 +210,29 @@ impl FdtNode {
     pub fn children(&self) -> impl Iterator<Item = &FdtNode> {
         self.children.iter()
     }
+
+    pub fn find_child_by_name(&self, name: &str) -> Option<&FdtNode> {
+        self.children().find(|node| node.name() == name)
+    }
+
+    fn find_prop_by_name(&self, name: &str) -> Option<&FdtProp> {
+        self.properties().find(|prop| prop.name() == name)
+    }
+
+    pub fn read_prop_string(&self, name: &str) -> Option<&'static str> {
+        self.find_prop_by_name(name)
+            .and_then(|prop| prop.read_prop_string())
+    }
+
+    pub fn read_u32(&self, name: &str, index: usize) -> Option<u32> {
+        self.find_prop_by_name(name)
+            .and_then(|prop| prop.read_u32(index))
+    }
+
+    pub fn read_u64(&self, name: &str, index: usize) -> Option<u64> {
+        self.find_prop_by_name(name)
+            .and_then(|prop| prop.read_u64(index))
+    }
 }
 
 pub struct Fdt {
@@ -245,5 +268,9 @@ impl Fdt {
 
     pub fn nodes(&self) -> impl Iterator<Item = &FdtNode> {
         self.nodes.iter()
+    }
+
+    pub fn root(&self) -> &FdtNode {
+        self.nodes().next().expect("Missing FDT root.")
     }
 }

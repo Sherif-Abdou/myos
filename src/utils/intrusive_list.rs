@@ -1,8 +1,5 @@
 use core::{
-    cell::Cell,
-    marker::{PhantomData, PhantomPinned},
-    pin::Pin,
-    ptr::NonNull,
+    cell::Cell, marker::{PhantomData, PhantomPinned}, pin::Pin, ptr::{NonNull, drop_in_place},
 };
 
 use alloc::{alloc::Allocator, boxed::Box};
@@ -88,6 +85,10 @@ impl ListLinks {
         }
         self.next.set(None);
         self.prev.set(None);
+    }
+
+    pub fn is_linked(self: Pin<&Self>) -> bool {
+        self.prev.get().is_some() && self.next.get().is_some()
     }
 }
 
@@ -307,6 +308,19 @@ impl<'a, T: LinkedNode<N>, const N: usize> Iterator for ListIterator<'a, T, N> {
 pub struct ListIteratorMut<'a, T: LinkedNode<N>, const N: usize = 0> {
     list: Pin<&'a mut List<T, N>>,
     ptr: Option<NonNull<ListLinks>>,
+}
+
+impl<'a, T: LinkedNode<N>, const N: usize> ListIteratorMut<'a, T, N> {
+    /// Safety: This list must be the only owner of the element to be dropped.
+    pub unsafe fn remove_and_drop(&mut self) {
+        if let Some(mut ptr) = self.ptr {
+            // Safety: Every element of this list is assumed to be pinned.
+            let pin: Pin<&mut ListLinks> = unsafe { Pin::new_unchecked(ptr.as_mut()) };
+            unsafe { pin.as_ref().remove(); }
+
+            unsafe { drop_in_place(ptr.as_ptr()) };
+        }
+    }
 }
 
 impl<'a, T: LinkedNode<N>, const N: usize> Iterator for ListIteratorMut<'a, T, N> {
