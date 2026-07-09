@@ -1,13 +1,13 @@
 use core::{
     arch::asm,
     cell::UnsafeCell,
-    mem::{MaybeUninit, zeroed},
+    mem::MaybeUninit,
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
 };
 
-use crate::utils::cpu_id;
+use crate::utils::{MAX_CPUS, cpu_id};
 
 pub struct CoreLock<T> {
     inner: UnsafeCell<T>,
@@ -39,8 +39,6 @@ impl<T> CoreLock<T> {
     }
 
     pub fn lock(&self) -> CoreLockGuard<'_, T> {
-        // This lock is only safe on Core 0. Do not allow other cores to acquire this lock.
-        assert_eq!(cpu_id(), 0);
         self.save_daif();
 
         CoreLockGuard {
@@ -119,5 +117,36 @@ impl<T, F: Fn() -> T> LazyCoreLock<T, F> {
             });
         }
         unsafe { self.inner.get().as_ref().unwrap().assume_init_ref() }
+    }
+}
+
+pub struct PerCpuLock<T> {
+    inner: [MaybeUninit<CoreLock<T>>; MAX_CPUS],
+}
+
+impl<T> PerCpuLock<T> {
+    pub fn new(f: impl Fn(usize) -> T) -> Self {
+        let mut array: [MaybeUninit<CoreLock<T>>; MAX_CPUS] =
+            [const { MaybeUninit::uninit() }; MAX_CPUS];
+
+        for (cpu_id, item) in array.iter_mut().enumerate() {
+            let inner = f(cpu_id);
+
+            item.write(CoreLock::new(inner));
+        }
+
+        Self { inner: array }
+    }
+
+    pub fn lock(&self) -> CoreLockGuard<'_, T> {
+        let cpu = cpu_id();
+
+        // Safety: Caller 
+        unsafe { self.inner[cpu].assume_init_ref().lock() }
+    }
+
+    // Safety: Only safe to call under an SMP critical section (single core boot, spinlock, mutex).
+    pub unsafe fn lock_cpu(&self, cpu_id: usize) -> CoreLockGuard<'_, T> {
+        unsafe { self.inner[cpu_id].assume_init_ref().lock() }
     }
 }

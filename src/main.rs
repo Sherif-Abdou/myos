@@ -1,14 +1,16 @@
 #![no_std]
 #![no_main]
 #![feature(allocator_api)]
+#![feature(maybe_uninit_array_assume_init)]
 
 mod allocators;
 mod arm_pl;
 mod dtb;
+mod gic;
 mod linker_symbols;
 mod memory;
 mod utils;
-mod gic;
+mod irq_handler;
 
 extern crate alloc;
 
@@ -17,17 +19,12 @@ use core::{
     panic::PanicInfo,
 };
 
-use alloc::boxed::Box;
-
 use crate::{
-    allocators::{KERNEL_ALLOCATOR, LLAllocator},
-    arm_pl::init_from_dtb_node,
-    dtb::{Fdt, find_earlyconsole_node},
-    memory::{PAGE_ALLOCATOR, init_allocator},
-    utils::{SpinLock, cpu_id},
+    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, dtb::{Fdt, find_earlyconsole_node}, gic::Gic, memory::init_allocator, utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
+global_asm!(include_str!("asm/exception_entry.s"));
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -40,6 +37,8 @@ fn panic(info: &PanicInfo) -> ! {
         unsafe { asm!("wfe") };
     }
 }
+
+static GIC: OnceSpinLock<KBox<Gic>> = OnceSpinLock::new();
 
 #[unsafe(no_mangle)]
 extern "C" fn entry() {
@@ -56,12 +55,16 @@ extern "C" fn entry() {
 
     init_allocator(memory);
 
-    let pages = PAGE_ALLOCATOR.lock().reserve_pages(24);
+    let gic_node = root
+        .children()
+        .find(|node| node.name().starts_with("intc"))
+        .unwrap();
 
-    let data = unsafe {
-        Box::<[u8; 5000], &'static SpinLock<LLAllocator>>::new_zeroed_in(&KERNEL_ALLOCATOR)
-            .assume_init()
-    };
+    let gic = kbox(Gic::from_node(gic_node));
+
+    gic.local_init();
+
+    assert!(GIC.set(gic).is_ok(), "Could not initialize GIC");
 
     early_printk!("Done.\n");
     loop {
