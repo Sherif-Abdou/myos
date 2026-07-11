@@ -165,6 +165,18 @@ impl Gic {
             write_sysreg!(ICC_EOIR1_EL1, irqn);
         }
     }
+
+    pub fn set_local_priority(prio: u8) {
+        unsafe {
+            write_sysreg!(ICC_PMR_EL1, prio);
+        }
+    }
+
+    pub fn enable_local_interrupts() {
+        unsafe {
+            write_sysreg!(ICC_IGRPEN1_EL1, 1);
+        }
+    }
 }
 
 struct GicDistributor {
@@ -191,7 +203,7 @@ impl GicRedistributor {
         unsafe {
             // Set default priority
             self.redistributor_base
-                .write_u32(80, 0x10000 + gicd_ipriority(irqn));
+                .write_u32(0x80, 0x10000 + gicd_ipriority(irqn));
             self.redistributor_base
                 .write_u32(1 << irqn as u32, 0x10000 + GICR_ISENABLER0);
 

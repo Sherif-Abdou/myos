@@ -106,6 +106,7 @@ impl<T> OnceSpinLock<T> {
 
         if !self.initialized.load(SeqCst) {
             unsafe { self.inner.get().write(Some(value)) };
+            self.initialized.store(true, SeqCst);
             Ok(())
         } else {
             Err(value)

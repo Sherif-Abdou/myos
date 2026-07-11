@@ -34,8 +34,8 @@ unsafe extern "C" {
 
 pub static BUMP_ALLOCATOR: LazyCoreLock<CoreLock<BumpAllocator>> = LazyCoreLock::new(|| {
     CoreLock::new(BumpAllocator::new(
-        NonNull::new(unsafe { (&raw mut __heap_start) as _ }).unwrap(),
-        NonNull::new(unsafe { (&raw mut __heap_end) as _ }).unwrap(),
+        NonNull::new((&raw mut __heap_start) as _).unwrap(),
+        NonNull::new((&raw mut __heap_end) as _).unwrap(),
     ))
 });
 
