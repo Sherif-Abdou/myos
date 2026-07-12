@@ -12,6 +12,7 @@ mod linker_symbols;
 mod memory;
 mod timer;
 mod utils;
+mod sched;
 
 extern crate alloc;
 
@@ -21,7 +22,7 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, configure_exceptions, daifclr}, memory::init_allocator, timer::ArmTimer, utils::OnceSpinLock,
+    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, configure_exceptions, daifclr}, memory::init_allocator, sched::init_scheduler, timer::ArmTimer, utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -76,6 +77,8 @@ extern "C" fn entry() {
     GIC.get().unwrap().enable_local_ppi(27);
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
+
+    init_scheduler();
 
     daifclr();
     early_printk!("Done.\n");

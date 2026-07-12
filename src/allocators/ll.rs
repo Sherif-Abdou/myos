@@ -67,9 +67,17 @@ impl LLCursor {
     unsafe fn insert(&mut self, ptr: *mut LLHole) {
         assert!(!ptr.is_null());
 
-        unsafe {
-            (*ptr).next = (*self.hole).next;
-            (*self.hole).next = ptr;
+        if !self.hole.is_null() {
+            unsafe {
+                (*ptr).next = (*self.hole).next;
+                (*self.hole).next = ptr;
+            }
+        } else {
+            unsafe {
+                (*ptr).next = core::ptr::null_mut();
+                self.head.write(ptr);
+                self.hole = ptr;
+            }
         }
     }
 
@@ -114,7 +122,7 @@ impl LLAllocator {
         let ll_hole: *mut LLHole = block.as_ptr().cast();
         let ll_hole_addr = ll_hole.addr();
         unsafe {
-            (*ll_hole).size = 8 * PAGE_SIZE;
+            (*ll_hole).size = pages * PAGE_SIZE;
             (*ll_hole).next = core::ptr::null_mut();
         }
         let mut cursor = self.cursor();
@@ -125,7 +133,7 @@ impl LLAllocator {
                 self.first_hole = ll_hole;
             } else {
                 // Find furthest hole before target address.
-                while !cursor.is_null() && cursor.get_next().addr() < ll_hole_addr {
+                while !cursor.is_null() && !cursor.get_next().is_null() && cursor.get_next().addr() < ll_hole_addr {
                     cursor.next();
                 }
                 // Insert hole.
@@ -158,6 +166,12 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                 let header_addr = ptr_addr - size_of::<LLHeader>();
                 let header = header_addr as *mut LLHeader;
                 let end = end_hole_addr.min(ptr_end + 2 * size_of::<LLHole>());
+
+                // We replaced the current hole with an allocation.
+                unsafe {
+                    cursor.remove();
+                }
+
                 unsafe {
                     (*header).region_start = start_hole_addr as _;
                     (*header).region_end = end as _;
@@ -176,10 +190,6 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                     }
                 }
 
-                // We replaced the current hole with an allocation.
-                unsafe {
-                    cursor.remove();
-                }
 
                 return Ok(NonNull::slice_from_raw_parts(
                     NonNull::new(ptr_addr as *mut u8).ok_or(AllocError)?,
@@ -225,7 +235,7 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                 cursor = locked.cursor();
             } else {
                 // Find furthest hole before target address.
-                while !cursor.is_null() && cursor.get_next().addr() < ll_hole_addr {
+                while !cursor.is_null() && !cursor.get_next().is_null() && cursor.get_next().addr() < ll_hole_addr {
                     cursor.next();
                 }
                 // Insert hole.

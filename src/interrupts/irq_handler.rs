@@ -1,25 +1,27 @@
-use crate::{Gic, early_printk, timer::ArmTimer};
+use crate::{Gic, early_printk, sched::SCHEDULER, timer::ArmTimer};
 
 #[repr(C)]
-struct ExceptionRegisters {
-    gprs: [u64; 32],
-    elr: u64,
-    spsr: u64,
+#[derive(Default, Debug)]
+pub struct ExceptionRegisters {
+    pub gprs: [u64; 32],
+    pub elr: u64,
+    pub spsr: u64,
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn sexc_handler() {}
+extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    regs
+}
 
 #[unsafe(no_mangle)]
-extern "C" fn irq_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+extern "C" fn irq_handler(mut regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let irq = Gic::acknowledge();
-    early_printk!("Interrupt.\n");
 
     if irq == 27 {
         ArmTimer::wait(1_000_000);
-        unsafe {
-            let gpr0 = (*regs).gprs[0];
-            early_printk!("x0: {:x}\n", gpr0);
+        if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
+            Gic::complete(irq);
+            return new_ret;
         }
     }
 
