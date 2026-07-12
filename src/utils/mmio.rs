@@ -5,7 +5,10 @@ pub struct MMIO {
 
 impl MMIO {
     pub const fn new(physical_base: usize, size: usize) -> Self {
-        Self { base: (physical_base | 0xffffff80_00000000) as *mut u8, size }
+        Self {
+            base: (physical_base | 0xffffff80_00000000) as *mut u8,
+            size,
+        }
     }
 
     pub unsafe fn read_u8(&self, offset: usize) -> u8 {

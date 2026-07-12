@@ -141,7 +141,7 @@ impl<T> PerCpuLock<T> {
     pub fn lock(&self) -> CoreLockGuard<'_, T> {
         let cpu = cpu_id();
 
-        // Safety: Caller 
+        // Safety: Caller
         unsafe { self.inner[cpu].assume_init_ref().lock() }
     }
 

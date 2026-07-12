@@ -13,6 +13,5 @@ pub fn find_earlyconsole_node(fdt: &Fdt) -> &FdtNode {
         .unwrap()
         .trim_start_matches('/');
 
-    root.find_child_by_name(node_name)
-        .unwrap()
+    root.find_child_by_name(node_name).unwrap()
 }

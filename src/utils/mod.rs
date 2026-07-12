@@ -1,14 +1,14 @@
+mod arc;
 mod core_lock;
 mod intrusive_list;
-mod arc;
-mod spin_lock;
 mod mmio;
+mod spin_lock;
 
+pub use arc::*;
 pub use core_lock::*;
 pub use intrusive_list::*;
-pub use spin_lock::*;
-pub use arc::*;
 pub use mmio::MMIO;
+pub use spin_lock::*;
 
 pub const MAX_CPUS: usize = 8;
 

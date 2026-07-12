@@ -1,5 +1,9 @@
 use core::{
-    alloc::Layout, mem::{ManuallyDrop, offset_of}, ops::{Deref, DerefMut}, ptr::{NonNull, drop_in_place}, sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    alloc::Layout,
+    mem::{ManuallyDrop, offset_of},
+    ops::{Deref, DerefMut},
+    ptr::{NonNull, drop_in_place},
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
 use alloc::alloc::Allocator;

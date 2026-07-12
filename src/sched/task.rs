@@ -1,7 +1,10 @@
 use core::arch::asm;
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR}, early_printk, impl_link, interrupts::{ExceptionRegisters, daifclr}, utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
+    allocators::{KBox, KERNEL_ALLOCATOR},
+    early_printk, impl_link,
+    interrupts::{ExceptionRegisters, daifclr},
+    utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
 };
 
 const STACK_SIZE: usize = 4096 * 4;
