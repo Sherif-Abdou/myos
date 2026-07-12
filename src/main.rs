@@ -86,3 +86,4 @@ extern "C" fn entry() {
         unsafe { asm!("wfe") };
     }
 }
+

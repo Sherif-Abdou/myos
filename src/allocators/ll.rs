@@ -81,6 +81,24 @@ impl LLCursor {
         }
     }
 
+    // Inserts `ptr` right after the cursor.
+    unsafe fn insert_before(&mut self, ptr: *mut LLHole) {
+        assert!(!ptr.is_null());
+
+        if !self.hole.is_null() {
+            unsafe {
+                (*ptr).next = self.hole;
+                (*self.previous).next = ptr;
+            }
+        } else {
+            unsafe {
+                (*ptr).next = core::ptr::null_mut();
+                self.head.write(ptr);
+                self.hole = ptr;
+            }
+        }
+    }
+
     unsafe fn next(&mut self) {
         assert!(!self.hole.is_null());
         self.previous = self.hole;
@@ -133,7 +151,10 @@ impl LLAllocator {
                 self.first_hole = ll_hole;
             } else {
                 // Find furthest hole before target address.
-                while !cursor.is_null() && !cursor.get_next().is_null() && cursor.get_next().addr() < ll_hole_addr {
+                while !cursor.is_null()
+                    && !cursor.get_next().is_null()
+                    && cursor.get_next().addr() < ll_hole_addr
+                {
                     cursor.next();
                 }
                 // Insert hole.
@@ -186,10 +207,9 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                     let ll_hole = ptr_end as *mut LLHole;
                     unsafe {
                         (*ll_hole).size = end_hole_addr - ptr_end;
-                        cursor.insert(ll_hole);
+                        cursor.insert_before(ll_hole);
                     }
                 }
-
 
                 return Ok(NonNull::slice_from_raw_parts(
                     NonNull::new(ptr_addr as *mut u8).ok_or(AllocError)?,
@@ -235,7 +255,10 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                 cursor = locked.cursor();
             } else {
                 // Find furthest hole before target address.
-                while !cursor.is_null() && !cursor.get_next().is_null() && cursor.get_next().addr() < ll_hole_addr {
+                while !cursor.is_null()
+                    && !cursor.get_next().is_null()
+                    && cursor.get_next().addr() < ll_hole_addr
+                {
                     cursor.next();
                 }
                 // Insert hole.

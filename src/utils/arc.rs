@@ -61,6 +61,10 @@ impl<T> Arc<T> {
         }
     }
 
+    pub unsafe fn as_inner_ptr(&self) -> *const ArcInner<T> {
+        self.inner.as_ptr()
+    }
+
     pub unsafe fn as_ptr(&self) -> *const T {
         self.deref()
     }

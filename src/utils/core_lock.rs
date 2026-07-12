@@ -16,7 +16,7 @@ pub struct CoreLock<T> {
 
 unsafe impl<T> Sync for CoreLock<T> {}
 
-fn with_core_critical_section<R, F: FnOnce() -> R>(f: F) -> R {
+pub fn with_core_critical_section<R, F: FnOnce() -> R>(f: F) -> R {
     let mut daif: u64 = 0;
 
     unsafe {

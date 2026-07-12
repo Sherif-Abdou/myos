@@ -8,7 +8,10 @@ use core::{
 
 use alloc::{alloc::Allocator, boxed::Box};
 
-use crate::utils::arc::{LinkedNode, ListArc, UniqueArc};
+use crate::utils::{
+    Arc,
+    arc::{LinkedNode, ListArc, UniqueArc},
+};
 
 #[derive(Debug)]
 pub struct ListLinks {
@@ -247,16 +250,40 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
         (&raw const *self.head).addr()
     }
 
-    pub fn iter(self: Pin<&Self>) -> ListCursor<'_, T, N> {
+    pub fn is_empty(&self) -> bool {
+        self.head.next.get().unwrap().addr().get() == self.sentinel_addr()
+    }
+
+    pub fn iter(&self) -> ListCursor<'_, T, N> {
         ListCursor {
             ptr: self.head.next.get(),
             list: self,
         }
     }
+
+    pub unsafe fn iter_at(&self, node: &Arc<T>) -> ListCursor<'_, T, N> {
+        let link = T::link_from_arc(unsafe { node.as_inner_ptr() } as *mut _);
+
+        ListCursor {
+            ptr: NonNull::new(link),
+            list: self,
+        }
+    }
+
+    pub unsafe fn remove_at(&mut self, node: &Arc<T>) -> ListArc<T, N> {
+        let ptr = T::link_from_arc(unsafe { node.as_inner_ptr() } as *mut _);
+        let link = unsafe { Pin::new_unchecked(ptr.as_ref().unwrap()) };
+
+        unsafe {
+            link.remove();
+        }
+
+        unsafe { ListArc::from_arc_inner(NonNull::new_unchecked(T::arc_from_link(ptr))) }
+    }
 }
 
 pub struct ListCursor<'a, T: LinkedNode<T, N>, const N: usize = 0> {
-    list: Pin<&'a List<T, N>>,
+    list: &'a List<T, N>,
     ptr: Option<NonNull<ListLinks>>,
 }
 
@@ -282,5 +309,18 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> Iterator for ListCursor<'a, T, N> 
         }
 
         item
+    }
+}
+
+impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursor<'a, T, N> {
+    pub fn get(&self) -> Option<&T> {
+        self.ptr.map(|ptr| {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            unsafe { (*arc_inner).as_raw().as_ref().unwrap() }
+        })
     }
 }
