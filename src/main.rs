@@ -87,6 +87,7 @@ extern "C" fn entry() {
 
     init_scheduler();
     daifclr();
+
     loop {
         unsafe { asm!("wfi") };
     }

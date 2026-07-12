@@ -130,6 +130,14 @@ pub struct ListArc<T, const N: usize> {
     inner: Arc<T>,
 }
 
+impl<T, const N: usize> Deref for ListArc<T, N> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 impl<T, const N: usize> From<UniqueArc<T>> for ListArc<T, N> {
     fn from(value: UniqueArc<T>) -> Self {
         ListArc { inner: value.inner }

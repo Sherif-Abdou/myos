@@ -1,12 +1,11 @@
 use core::{
-    arch::{asm, naked_asm}, hint::black_box, mem::take,
+    arch::{asm, naked_asm},
+    hint::black_box,
+    mem::take,
 };
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR},
-    early_printk, impl_link,
-    interrupts::{ExceptionRegisters, daifclr, daifset},
-    utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
+    allocators::{KBox, KERNEL_ALLOCATOR}, early_printk, impl_link, interrupts::{ExceptionRegisters, daifclr, daifset}, sched::mutex::Mutex, utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
 };
 
 const STACK_SIZE: usize = 4096 * 4;
@@ -23,21 +22,41 @@ pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
 extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
     f(arg);
     SCHEDULER.get().unwrap().end_task();
+
+    let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
+
+    restore_regs_and_eret(next_task);
 }
+
+static COUNTER: Mutex<usize> = Mutex::new(0);
 
 fn loop1(_arg: *mut ()) {
     loop {
-        early_printk!("Hello from thread 1\n");
-        unsafe {
-            asm!("wfi");
+        let mut counter = COUNTER.lock();
+        for _ in 0..5 {
+            *counter += 1;
+            unsafe { asm!("wfi"); }
+        }
+        early_printk!("Count (thread1): {}\n", *counter);
+        drop(counter);
+        for _ in 0..5 {
+            unsafe { asm!("wfi"); }
         }
     }
 }
 
 fn loop2(_arg: *mut ()) {
-    for i in 0..5 {
-        early_printk!("Hello from thread 2\n");
-        schedule();
+    loop {
+        let mut counter = COUNTER.lock();
+        for _ in 0..5 {
+            *counter += 1;
+            unsafe { asm!("wfi"); }
+        }
+        early_printk!("Count (thread2): {}\n", *counter);
+        drop(counter);
+        for _ in 0..5 {
+            unsafe { asm!("wfi"); }
+        }
     }
 }
 
@@ -45,7 +64,8 @@ pub fn init_scheduler() {
     assert!(
         SCHEDULER
             .set(Sched {
-                tasks: SpinLock::new(List::new()),
+                run_queue: SpinLock::new(List::new()),
+                blocked_queue: SpinLock::new(List::new()),
                 kill_queue: SpinLock::new(List::new()),
                 scheduled: SpinLock::new(None),
             })
@@ -59,22 +79,22 @@ pub fn init_scheduler() {
 impl_link!(Task, 0 => links);
 
 pub struct Sched {
-    tasks: SpinLock<List<Task>>,
+    // Tasks that are available to run.
+    run_queue: SpinLock<List<Task>>,
+    // Tasks that are blocked.
+    blocked_queue: SpinLock<List<Task>>,
     // Tasks to be killed on the next tick.
     kill_queue: SpinLock<List<Task>>,
     scheduled: SpinLock<Option<Arc<Task>>>,
 }
 
-pub fn create_stack() -> KBox<[u8; STACK_SIZE]> {
+fn create_stack() -> KBox<[u8; STACK_SIZE]> {
     let b = KBox::new_zeroed_in(&KERNEL_ALLOCATOR);
     unsafe { b.assume_init() }
 }
 
-pub fn schedule_end() {
-}
-
 #[unsafe(naked)]
-extern "C" fn save_callee_regs(dst: *mut u64, new_pc: usize, new_lr: usize) {
+extern "C" fn save_callee_regs(dst: *mut u64, new_pc: usize) {
     naked_asm!(
         "stp x18, x19, [x0]",
         "stp x20, x21, [x0, #0x10]",
@@ -123,32 +143,30 @@ extern "C" fn restore_regs_and_eret(regs: *const ExceptionRegisters) {
     )
 }
 
-pub fn schedule() {
+pub fn sched_yield() {
     {
-        let mut lr = 0usize;
-        unsafe {
-            asm!("mov {0}, x30", out(reg) lr);
-        }
         daifset();
 
         let mut addr: usize = 0;
-        unsafe { asm!("ldr {0}, =1f", out(reg) addr); }
+        unsafe {
+            asm!("ldr {0}, =1f", out(reg) addr);
+        }
 
         let this_task = SCHEDULER.get().unwrap().task().unwrap();
 
         let mut regs = this_task.registers.lock();
         let reg_ptr = unsafe { regs.gprs.as_mut_ptr().add(18) };
-        save_callee_regs(reg_ptr, addr, lr);
+        save_callee_regs(reg_ptr, addr);
         drop(regs);
     }
 
-
     let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
-
 
     restore_regs_and_eret(next_task);
 
-    unsafe { asm!("1: nop"); }
+    unsafe {
+        asm!("1: nop");
+    }
 
     daifclr();
 }
@@ -158,8 +176,24 @@ impl Sched {
         self.scheduled.lock().as_ref().cloned()
     }
 
+    pub fn block_this_task(&self) {
+        let task = self.task().unwrap();
+
+        let task = unsafe { self.run_queue.lock().remove_at(&task) };
+
+        self.blocked_queue.lock().push_back(task);
+
+        sched_yield();
+    }
+
+    pub fn unblock_task(&self, task: &Arc<Task>) {
+        let task = unsafe { self.blocked_queue.lock().remove_at(task) };
+
+        self.run_queue.lock().push_back(task);
+    }
+
     pub fn end_task(&self) {
-        let mut tasks = self.tasks.lock();
+        let mut tasks = self.run_queue.lock();
         let mut kill_queue = self.kill_queue.lock();
         let mut current = self.scheduled.lock();
 
@@ -183,7 +217,7 @@ impl Sched {
         registers.spsr = 0b0101;
         drop(registers);
 
-        self.tasks.lock().push_back(task.into());
+        self.run_queue.lock().push_back(task.into());
     }
 
     pub fn save_register_state_to_task(&self, state: &ExceptionRegisters) {
@@ -203,7 +237,7 @@ impl Sched {
 
         drop(kill_queue);
 
-        let mut tasks = self.tasks.lock();
+        let mut tasks = self.run_queue.lock();
         let task = tasks.remove_front();
 
         if let Some(task) = task {
