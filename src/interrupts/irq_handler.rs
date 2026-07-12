@@ -1,7 +1,7 @@
 use crate::{Gic, early_printk, sched::SCHEDULER, timer::ArmTimer};
 
 #[repr(C)]
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct ExceptionRegisters {
     pub gprs: [u64; 32],
     pub elr: u64,
@@ -19,6 +19,9 @@ extern "C" fn irq_handler(mut regs: *mut ExceptionRegisters) -> *const Exception
 
     if irq == 27 {
         ArmTimer::wait(1_000_000);
+
+        SCHEDULER.get().unwrap().save_register_state_to_task(unsafe { regs.as_ref().unwrap() });
+
         if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
             Gic::complete(irq);
             return new_ret;
