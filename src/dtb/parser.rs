@@ -152,6 +152,7 @@ impl Default for FdtNodeMeta {
     }
 }
 
+#[derive(Debug)]
 pub struct FdtNode {
     name: Option<&'static str>,
     properties: LinkedList<FdtProp, &'static CoreLock<BumpAllocator>>,
@@ -239,6 +240,8 @@ pub struct Fdt {
     header: FtdHeader,
     nodes: LinkedList<FdtNode, &'static CoreLock<BumpAllocator>>,
 }
+
+unsafe impl Sync for Fdt {}
 
 unsafe extern "C" {
     static __dtb_addr: usize;

@@ -160,12 +160,12 @@ pub fn init_allocator(memory: &FdtNode) {
     allocator.bitmask = bitmask;
     allocator.offset = memory_start / PAGE_SIZE;
 
-    let kernel_image_pfn = Pfn((&raw const __kernel_start).addr() / PAGE_SIZE);
+    let kernel_image_pfn = Pfn(((&raw const __kernel_start).addr() & 0xffffffff) / PAGE_SIZE);
     let kernel_image_page_count =
         ((&raw const __kernel_end).addr() - (&raw const __kernel_start).addr()).div_ceil(PAGE_SIZE);
 
     // Reserve the DTB region
-    allocator.mark_used(Pfn(memory_start), DTB_LEN / PAGE_SIZE);
+    allocator.mark_used(Pfn(memory_start / PAGE_SIZE), DTB_LEN / PAGE_SIZE);
     // Reserve the kernel image
     allocator.mark_used(kernel_image_pfn, kernel_image_page_count);
     // Reserve the page bitmask

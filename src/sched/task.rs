@@ -11,10 +11,13 @@ use crate::{
 const STACK_SIZE: usize = 4096 * 4;
 
 #[repr(align(16))]
+struct TaskStack([u8; STACK_SIZE]);
+
+#[repr(align(16))]
 pub struct Task {
     registers: SpinLock<ExceptionRegisters>,
     links: ListLinks,
-    stack: KBox<[u8; STACK_SIZE]>,
+    stack: KBox<TaskStack>,
 }
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
@@ -26,38 +29,6 @@ extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
     let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
 
     restore_regs_and_eret(next_task);
-}
-
-static COUNTER: Mutex<usize> = Mutex::new(0);
-
-fn loop1(_arg: *mut ()) {
-    loop {
-        let mut counter = COUNTER.lock();
-        for _ in 0..5 {
-            *counter += 1;
-            unsafe { asm!("wfi"); }
-        }
-        early_printk!("Count (thread1): {}\n", *counter);
-        drop(counter);
-        for _ in 0..5 {
-            unsafe { asm!("wfi"); }
-        }
-    }
-}
-
-fn loop2(_arg: *mut ()) {
-    loop {
-        let mut counter = COUNTER.lock();
-        for _ in 0..5 {
-            *counter += 1;
-            unsafe { asm!("wfi"); }
-        }
-        early_printk!("Count (thread2): {}\n", *counter);
-        drop(counter);
-        for _ in 0..5 {
-            unsafe { asm!("wfi"); }
-        }
-    }
 }
 
 pub fn init_scheduler() {
@@ -72,8 +43,6 @@ pub fn init_scheduler() {
             .is_ok(),
         "Couldn't initialize scheduler"
     );
-    SCHEDULER.get().unwrap().task_from_fn(loop1);
-    SCHEDULER.get().unwrap().task_from_fn(loop2);
 }
 
 impl_link!(Task, 0 => links);
@@ -88,7 +57,7 @@ pub struct Sched {
     scheduled: SpinLock<Option<Arc<Task>>>,
 }
 
-fn create_stack() -> KBox<[u8; STACK_SIZE]> {
+fn create_stack() -> KBox<TaskStack> {
     let b = KBox::new_zeroed_in(&KERNEL_ALLOCATOR);
     unsafe { b.assume_init() }
 }
@@ -213,7 +182,8 @@ impl Sched {
         let mut registers = task.registers.lock();
         registers.elr = (thread_wrapper as usize) as u64;
         registers.gprs[0] = (f as usize) as u64;
-        registers.gprs[31] = task.stack.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        assert!(registers.gprs[31].is_multiple_of(16), "Stack ptr is not aligned");
         registers.spsr = 0b0101;
         drop(registers);
 

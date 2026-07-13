@@ -1,3 +1,5 @@
+use core::arch::asm;
+
 use crate::{Gic, early_printk, sched::SCHEDULER, timer::ArmTimer};
 
 #[repr(C)]
@@ -10,6 +12,10 @@ pub struct ExceptionRegisters {
 
 #[unsafe(no_mangle)]
 extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    early_printk!("EXCEPTION: \n");
+    loop {
+        unsafe { asm!("wfi"); }
+    }
     regs
 }
 

@@ -3,9 +3,12 @@
 #![allow(dead_code)]
 #![feature(allocator_api)]
 #![feature(maybe_uninit_array_assume_init)]
+#![feature(unsize)]
+#![feature(coerce_unsized)]
 
 mod allocators;
 mod arm_pl;
+mod driver;
 mod dtb;
 mod interrupts;
 mod linker_symbols;
@@ -24,10 +27,11 @@ use core::{
 use crate::{
     allocators::{KBox, kbox},
     arm_pl::init_from_dtb_node,
+    driver::DeviceBus,
     dtb::{Fdt, find_earlyconsole_node},
     interrupts::{Gic, configure_exceptions, daifclr},
     memory::init_allocator,
-    sched::init_scheduler,
+    sched::{SCHEDULER, init_scheduler},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -48,6 +52,8 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 static GIC: OnceSpinLock<KBox<Gic>> = OnceSpinLock::new();
+
+static FDT: OnceSpinLock<Fdt> = OnceSpinLock::new();
 
 fn timer() {}
 
@@ -85,10 +91,31 @@ extern "C" fn entry() {
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
 
+    assert!(FDT.set(fdt).is_ok());
+
     init_scheduler();
+
+    early_printk!("Scheduler initialized, starting full boot.\n");
+    SCHEDULER.get().unwrap().task_from_fn(threaded_init);
     daifclr();
 
     loop {
         unsafe { asm!("wfi") };
+    }
+}
+
+pub static DEVICE_BUS: OnceSpinLock<DeviceBus> = OnceSpinLock::new();
+
+pub fn threaded_init(_arg: *mut ()) {
+    let fdt = FDT.get().unwrap();
+
+    assert!(DEVICE_BUS.set(DeviceBus::new()).is_ok());
+
+    DEVICE_BUS.get().unwrap().walk_fdt_root(fdt.root());
+
+    loop {
+        unsafe {
+            asm!("wfi");
+        }
     }
 }

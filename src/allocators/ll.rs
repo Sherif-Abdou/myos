@@ -85,16 +85,14 @@ impl LLCursor {
     unsafe fn insert_before(&mut self, ptr: *mut LLHole) {
         assert!(!ptr.is_null());
 
-        if !self.hole.is_null() {
-            unsafe {
-                (*ptr).next = self.hole;
-                (*self.previous).next = ptr;
-            }
-        } else {
-            unsafe {
-                (*ptr).next = core::ptr::null_mut();
+        unsafe {
+            (*ptr).next = self.hole;
+            if !self.previous.is_null() {
+                unsafe {
+                    (*self.previous).next = ptr;
+                }
+            } else {
                 self.head.write(ptr);
-                self.hole = ptr;
             }
         }
     }

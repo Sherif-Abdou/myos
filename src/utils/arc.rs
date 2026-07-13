@@ -1,7 +1,8 @@
 use core::{
     alloc::Layout,
+    marker::Unsize,
     mem::{ManuallyDrop, offset_of},
-    ops::{Deref, DerefMut},
+    ops::{CoerceUnsized, Deref, DerefMut},
     ptr::{NonNull, drop_in_place},
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
@@ -25,11 +26,13 @@ pub fn arc_inner_offset<T>() -> usize {
     offset_of!(ArcInner<T>, inner)
 }
 
-pub struct Arc<T> {
+pub struct Arc<T: ?Sized> {
     inner: NonNull<ArcInner<T>>,
 }
 
-impl<T> Clone for Arc<T> {
+impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Arc<U>> for Arc<T> {}
+
+impl<T: ?Sized> Clone for Arc<T> {
     fn clone(&self) -> Self {
         unsafe {
             self.inner.as_ref().count.fetch_add(1, SeqCst);
@@ -50,7 +53,9 @@ impl<T> Arc<T> {
 
         Self { inner }
     }
+}
 
+impl<T: ?Sized> Arc<T> {
     pub fn make_unique(self: Arc<T>) -> Result<UniqueArc<T>, Arc<T>> {
         if unsafe {
             self.inner
@@ -74,7 +79,7 @@ impl<T> Arc<T> {
     }
 }
 
-impl<T> Deref for Arc<T> {
+impl<T: ?Sized> Deref for Arc<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -82,17 +87,18 @@ impl<T> Deref for Arc<T> {
     }
 }
 
-impl<T> Drop for Arc<T> {
+impl<T: ?Sized> Drop for Arc<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.inner.as_ref() };
+        let layout = Layout::for_value(&inner.inner);
         if inner.count.fetch_sub(1, SeqCst) == 1 {
             unsafe { drop_in_place(self.inner.as_ptr()) };
-            unsafe { KERNEL_ALLOCATOR.deallocate(self.inner.cast(), Layout::new::<ArcInner<T>>()) };
+            unsafe { KERNEL_ALLOCATOR.deallocate(self.inner.cast(), layout) };
         }
     }
 }
 
-pub struct UniqueArc<T> {
+pub struct UniqueArc<T: ?Sized> {
     inner: Arc<T>,
 }
 
@@ -102,7 +108,9 @@ impl<T> UniqueArc<T> {
             inner: Arc::new(inner),
         }
     }
+}
 
+impl<T: ?Sized> UniqueArc<T> {
     pub unsafe fn as_ptr(&self) -> *const T {
         unsafe { self.inner.as_ptr() }
     }
@@ -112,7 +120,7 @@ impl<T> UniqueArc<T> {
     }
 }
 
-impl<T> Deref for UniqueArc<T> {
+impl<T: ?Sized> Deref for UniqueArc<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -120,17 +128,19 @@ impl<T> Deref for UniqueArc<T> {
     }
 }
 
-impl<T> DerefMut for UniqueArc<T> {
+impl<T: ?Sized> DerefMut for UniqueArc<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut self.inner.inner.as_mut().inner }
     }
 }
 
-pub struct ListArc<T, const N: usize> {
+impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<UniqueArc<U>> for UniqueArc<T> {}
+
+pub struct ListArc<T: ?Sized, const N: usize> {
     inner: Arc<T>,
 }
 
-impl<T, const N: usize> Deref for ListArc<T, N> {
+impl<T: ?Sized, const N: usize> Deref for ListArc<T, N> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -138,13 +148,13 @@ impl<T, const N: usize> Deref for ListArc<T, N> {
     }
 }
 
-impl<T, const N: usize> From<UniqueArc<T>> for ListArc<T, N> {
+impl<T: ?Sized, const N: usize> From<UniqueArc<T>> for ListArc<T, N> {
     fn from(value: UniqueArc<T>) -> Self {
         ListArc { inner: value.inner }
     }
 }
 
-impl<T, const N: usize> ListArc<T, N> {
+impl<T: ?Sized, const N: usize> ListArc<T, N> {
     pub unsafe fn into_arc_inner(self) -> NonNull<ArcInner<T>> {
         let arc = ManuallyDrop::new(self);
 
@@ -162,7 +172,12 @@ impl<T, const N: usize> ListArc<T, N> {
     }
 }
 
-pub trait LinkedNode<T, const N: usize> {
+impl<T: ?Sized + Unsize<U>, U: ?Sized, const N: usize> CoerceUnsized<ListArc<U, N>>
+    for ListArc<T, N>
+{
+}
+
+pub trait LinkedNode<T: ?Sized, const N: usize> {
     fn arc_from_link(link: *mut ListLinks) -> *mut ArcInner<T>;
 
     fn link_from_arc(arc: *mut ArcInner<T>) -> *mut ListLinks;
