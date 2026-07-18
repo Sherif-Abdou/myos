@@ -4,21 +4,12 @@ use core::{
     sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
 
-use crate::{
-    early_printk, impl_link, sched::{SCHEDULER, Task, sched_yield}, utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
-};
-
-struct WaitQueueNode {
-    task: Arc<Task>,
-    links: ListLinks,
-}
-
-impl_link!(WaitQueueNode, 0 => links);
+use crate::sched::WaitQueue;
 
 pub struct Mutex<T> {
     inner: UnsafeCell<T>,
     available: AtomicBool,
-    wait_queue: SpinLock<Option<List<WaitQueueNode>>>,
+    wait_queue: WaitQueue,
 }
 
 impl<T> Mutex<T> {
@@ -26,7 +17,7 @@ impl<T> Mutex<T> {
         Self {
             inner: UnsafeCell::new(inner),
             available: AtomicBool::new(false),
-            wait_queue: SpinLock::new(None),
+            wait_queue: WaitQueue::new(),
         }
     }
 
@@ -39,24 +30,7 @@ impl<T> Mutex<T> {
             {
                 return MutexGuard { mutex: self };
             } else {
-                let this_task = SCHEDULER.get().unwrap().task();
-                let mut wait_queue = self.wait_queue.lock();
-
-                if wait_queue.is_none() {
-                    *wait_queue = Some(List::new());
-                }
-
-                wait_queue.as_mut().unwrap().push_back(
-                    UniqueArc::new(WaitQueueNode {
-                        task: this_task.unwrap(),
-                        links: ListLinks::new(),
-                    })
-                    .into(),
-                );
-
-                SCHEDULER.get().unwrap().block_this_task();
-
-                sched_yield();
+                self.wait_queue.block_this_task();
             }
         }
     }
@@ -85,14 +59,6 @@ impl<T> DerefMut for MutexGuard<'_, T> {
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
         self.mutex.available.store(false, SeqCst);
-        if let Some(waiter) = self
-            .mutex
-            .wait_queue
-            .lock()
-            .as_mut()
-            .and_then(|queue| queue.remove_front())
-        {
-            SCHEDULER.get().unwrap().unblock_task(&waiter.task);
-        }
+        self.mutex.wait_queue.unblock_front();
     }
 }

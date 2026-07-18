@@ -124,8 +124,16 @@ pub struct PerCpuLock<T> {
     inner: [MaybeUninit<CoreLock<T>>; MAX_CPUS],
 }
 
+impl<T> PerCpuLock<Option<T>> {
+    pub const fn nones() -> Self {
+        Self {
+            inner: [const { MaybeUninit::new(CoreLock::new(None)) }; MAX_CPUS]
+        }
+    }
+}
+
 impl<T> PerCpuLock<T> {
-    pub fn new(f: impl Fn(usize) -> T) -> Self {
+    pub fn from_fn(f: impl Fn(usize) -> T) -> Self {
         let mut array: [MaybeUninit<CoreLock<T>>; MAX_CPUS] =
             [const { MaybeUninit::uninit() }; MAX_CPUS];
 

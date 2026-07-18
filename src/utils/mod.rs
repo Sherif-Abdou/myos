@@ -1,5 +1,6 @@
 mod arc;
 mod core_lock;
+mod deque;
 mod intrusive_list;
 mod mmio;
 mod spin_lock;
@@ -9,6 +10,7 @@ pub use core_lock::*;
 pub use intrusive_list::*;
 pub use mmio::MMIO;
 pub use spin_lock::*;
+pub use deque::Deque;
 
 pub const MAX_CPUS: usize = 8;
 

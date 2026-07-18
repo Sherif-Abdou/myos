@@ -1,7 +1,10 @@
 mod pl;
 
 use crate::{
-    driver::pl::Pl, dtb::FdtNode, early_printk, impl_link, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    driver::pl::Pl,
+    dtb::FdtNode,
+    early_printk, impl_link,
+    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 pub struct Device {
@@ -17,6 +20,10 @@ pub trait Driver {
     where
         Self: Sized;
 
+    fn init(driver: Arc<Self>, node: &FdtNode)
+    where
+        Self: Sized;
+
     fn compatible_string() -> &'static str
     where
         Self: Sized;
@@ -29,10 +36,11 @@ pub struct DeviceBus {
 macro_rules! check_driver {
     ($devices:expr,$node:expr,$compatible:expr,$driver:tt) => {
         if $compatible == $driver::compatible_string() {
-            let driver: UniqueArc<dyn Driver> = UniqueArc::new($driver::new($node));
-            let driver: ListArc<dyn Driver, 0> = driver.into();
-
             early_printk!("Probing {}\n", $node.name());
+
+            let driver: UniqueArc<$driver> = UniqueArc::new($driver::new($node));
+            let driver: ListArc<$driver, 0> = driver.into();
+            $driver::init(driver.clone_arc(), $node);
 
             let device = UniqueArc::new(Device {
                 driver: driver.clone_arc(),
@@ -57,7 +65,6 @@ impl DeviceBus {
             let Some(compatible) = node.read_prop_string("compatible") else {
                 continue;
             };
-
 
             check_driver!(self.devices, node, compatible, Pl);
         }

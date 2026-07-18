@@ -21,9 +21,13 @@ const GICD_SETSPI_NSR: usize = 0x40;
 const GICD_CLRSPI_NSR: usize = 0x48;
 // Interrupt Group Registers.
 const fn gicd_igroupr(n: usize) -> usize {
-    0x100 + 0x4 * n
+    0x080 + 0x4 * n
 }
 // Interrupt Set-Enable Registers.
+const fn gicd_isenabler(n: usize) -> usize {
+    0x100 + 0x4 * n
+}
+// Interrupt Clear-Enable Registers.
 const fn gicd_icenabler(n: usize) -> usize {
     0x180 + 0x4 * n
 }
@@ -120,7 +124,7 @@ impl Gic {
         let redistributor_base = node.read_u64("reg", 2).unwrap();
         let redistributor_size = node.read_u64("reg", 3).unwrap();
 
-        let redistributors = PerCpuLock::new(|cpu_id| {
+        let redistributors = PerCpuLock::from_fn(|cpu_id| {
             let mmio = MMIO::new(
                 redistributor_base as usize + 0x20000 * cpu_id,
                 redistributor_size as usize,
@@ -143,6 +147,14 @@ impl Gic {
 
     pub fn disable_local_ppi(&self, irqn: usize) {
         self.redistributors.lock().disable_ppi(irqn);
+    }
+
+    pub fn enable_spi(&self, irqn: usize) {
+        self.distributor.lock().enable_spi(irqn);
+    }
+
+    pub fn disable_spi(&self, irqn: usize) {
+        self.distributor.lock().disable_spi(irqn);
     }
 
     /// Initialize core specific GIC cpu interface, PPIs, and SGIs
@@ -201,9 +213,6 @@ impl GicRedistributor {
         assert!(irqn < 32);
         self.wakeup();
         unsafe {
-            // Set default priority
-            self.redistributor_base
-                .write_u32(0x80, 0x10000 + gicd_ipriority(irqn));
             self.redistributor_base
                 .write_u32(1 << irqn as u32, 0x10000 + GICR_ISENABLER0);
 
@@ -234,6 +243,42 @@ impl GicDistributor {
                 .write_u32((1 << 1) | (1 << 2) | (1 << 4), GICD_CTRL);
         }
 
+        while unsafe { self.distributor_base.read_u32(GICD_CTRL) & (1 << 31) } != 0 {
+            core::hint::spin_loop();
+        }
+    }
+
+    pub fn enable_spi(&self, irqn: usize) {
+        // while unsafe { self.distributor_base.read_u32(GICD_CTRL) & (1 << 31) } != 0 {
+        //     core::hint::spin_loop();
+        // }
+
+        let index = (irqn) / 32;
+        let offset = (irqn) % 32;
+        unsafe {
+            self.distributor_base
+                .modify_u32(gicd_isenabler(index), |before| before | (1 << offset));
+            self.distributor_base
+                .modify_u32(gicd_igroupr(index), |before| before | (1 << offset));
+            self.distributor_base
+                .write_u8(0x80, gicd_ipriority(0) + irqn);
+        }
+        // while unsafe { self.distributor_base.read_u32(GICD_CTRL) & (1 << 31) } != 0 {
+        //     core::hint::spin_loop();
+        // }
+    }
+
+    pub fn disable_spi(&self, irqn: usize) {
+        while unsafe { self.distributor_base.read_u32(GICD_CTRL) & (1 << 31) } != 0 {
+            core::hint::spin_loop();
+        }
+
+        let index = irqn / 32;
+        let offset = irqn % 32;
+        unsafe {
+            self.distributor_base
+                .modify_u32(gicd_icenabler(index), |before| before | (1 << offset));
+        }
         while unsafe { self.distributor_base.read_u32(GICD_CTRL) & (1 << 31) } != 0 {
             core::hint::spin_loop();
         }

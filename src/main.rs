@@ -29,7 +29,7 @@ use crate::{
     arm_pl::init_from_dtb_node,
     driver::DeviceBus,
     dtb::{Fdt, find_earlyconsole_node},
-    interrupts::{Gic, configure_exceptions, daifclr},
+    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
     timer::ArmTimer,
@@ -90,6 +90,19 @@ extern "C" fn entry() {
     GIC.get().unwrap().enable_local_ppi(27);
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
+
+    IRQ_TABLE.lock().register_interrupt(
+        27,
+        |_| {
+            ArmTimer::wait(1_000_000);
+            early_printk!("Timer\n");
+
+            if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
+                *RETURN_TABLE.lock() = Some(new_ret);
+            }
+        },
+        None,
+    );
 
     assert!(FDT.set(fdt).is_ok());
 

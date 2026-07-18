@@ -4,7 +4,7 @@ mod irq_handler;
 use core::arch::asm;
 
 pub use gic::Gic;
-pub use irq_handler::ExceptionRegisters;
+pub use irq_handler::{ExceptionRegisters, IRQ_TABLE, RETURN_TABLE};
 
 use crate::write_sysreg;
 

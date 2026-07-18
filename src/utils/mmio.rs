@@ -3,6 +3,10 @@ pub struct MMIO {
     size: usize,
 }
 
+// MMIO is expected to be synchronized through device memory rules in arm.
+unsafe impl Sync for MMIO {}
+unsafe impl Send for MMIO {}
+
 impl MMIO {
     pub const fn new(physical_base: usize, size: usize) -> Self {
         Self {
