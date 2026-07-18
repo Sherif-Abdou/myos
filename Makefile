@@ -21,9 +21,7 @@ BASE_COMMAND:= qemu-system-aarch64 \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
-		-device virtconsole,chardev=ch0 \
 		-chardev stdio,id=ch0,mux=on \
-		-mon chardev=ch0,mode=readline \
 		-serial chardev:ch0
 else
 BASE_COMMAND:=qemu-system-aarch64 \
@@ -33,9 +31,6 @@ BASE_COMMAND:=qemu-system-aarch64 \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
-		-device virtconsole,chardev=ch0 \
-		-chardev stdio,id=ch0,mux=on \
-		-mon chardev=ch0,mode=readline \
 		-serial chardev:ch0
 endif
 
@@ -51,6 +46,8 @@ virt.dtb: $(TARGET)
 		-mon chardev=ch0,mode=readline
 
 debug: $(TARGET) virt.dtb
+	cargo b
 	$(BASE_COMMAND) -s -S
 emulate: $(TARGET) virt.dtb
+	cargo b
 	$(BASE_COMMAND)

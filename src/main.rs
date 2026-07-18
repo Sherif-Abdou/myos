@@ -14,6 +14,7 @@ mod interrupts;
 mod linker_symbols;
 mod memory;
 mod sched;
+mod subsystem;
 mod timer;
 mod utils;
 
@@ -95,7 +96,6 @@ extern "C" fn entry() {
         27,
         |_| {
             ArmTimer::wait(1_000_000);
-            early_printk!("Timer\n");
 
             if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
                 *RETURN_TABLE.lock() = Some(new_ret);

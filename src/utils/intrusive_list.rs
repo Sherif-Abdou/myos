@@ -21,6 +21,9 @@ pub struct ListLinks {
     _pin: PhantomPinned,
 }
 
+unsafe impl Send for ListLinks {}
+unsafe impl Sync for ListLinks {}
+
 impl Default for ListLinks {
     fn default() -> Self {
         Self::new()

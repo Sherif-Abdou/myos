@@ -22,6 +22,10 @@ impl WaitQueue {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.queue.lock().as_ref().is_none_or(|q| q.is_empty())
+    }
+
     pub fn block_this_task(&self) {
         let this_task = SCHEDULER.get().unwrap().task();
         let mut wait_queue = self.queue.lock();

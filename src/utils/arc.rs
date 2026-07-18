@@ -32,6 +32,9 @@ pub struct Arc<T: ?Sized> {
 
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Arc<U>> for Arc<T> {}
 
+unsafe impl<T: ?Sized + Sync> Sync for ArcInner<T> {}
+unsafe impl<T: ?Sized + Sync> Send for ArcInner<T> {}
+
 impl<T: ?Sized> Clone for Arc<T> {
     fn clone(&self) -> Self {
         unsafe {
@@ -78,6 +81,9 @@ impl<T: ?Sized> Arc<T> {
         self.deref()
     }
 }
+
+unsafe impl<T: ?Sized + Sync> Sync for Arc<T> {}
+unsafe impl<T: ?Sized + Sync> Send for Arc<T> {}
 
 impl<T: ?Sized> Deref for Arc<T> {
     type Target = T;

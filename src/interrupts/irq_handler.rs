@@ -1,4 +1,4 @@
-use core::{any::Any, arch::asm};
+use core::{any::Any, arch::asm, sync::atomic::{AtomicBool, Ordering::SeqCst}};
 
 use crate::{
     Gic, early_printk,
@@ -11,6 +11,12 @@ pub static RETURN_TABLE: PerCpuLock<Option<*const ExceptionRegisters>> = PerCpuL
 pub static IRQ_TABLE: SpinLock<IrqTable> = SpinLock::new(IrqTable {
     irqs: [const { None }; 1024],
 });
+
+static IRQ_BOOL: AtomicBool = AtomicBool::new(false);
+
+pub fn can_block() -> bool {
+    IRQ_BOOL.load(SeqCst)
+}
 
 pub struct IrqContext<'a> {
     data: Option<&'a Arc<dyn Any + Sync + Send>>,
@@ -58,6 +64,8 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
 #[unsafe(no_mangle)]
 extern "C" fn irq_handler(mut regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let irq = Gic::acknowledge();
+    IRQ_BOOL.store(true, SeqCst);
+
     SCHEDULER
         .get()
         .unwrap()
@@ -70,6 +78,7 @@ extern "C" fn irq_handler(mut regs: *mut ExceptionRegisters) -> *const Exception
     Gic::complete(irq);
 
     let return_regs = RETURN_TABLE.lock().take().unwrap_or(regs);
+    IRQ_BOOL.store(false, SeqCst);
 
     // Return to who we came from.
     return_regs

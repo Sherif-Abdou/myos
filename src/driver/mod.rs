@@ -1,4 +1,5 @@
 mod pl;
+mod virtio;
 
 use crate::{
     driver::pl::Pl,
