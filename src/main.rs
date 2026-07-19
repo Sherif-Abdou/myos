@@ -45,6 +45,7 @@ fn panic(info: &PanicInfo) -> ! {
     early_printk!("PANIC\n");
     if let Some(message) = info.message().as_str() {
         early_printk!("{}\n", message);
+        printk!("{}\n", message);
     }
 
     loop {
@@ -125,6 +126,8 @@ pub fn threaded_init(_arg: *mut ()) {
     assert!(DEVICE_BUS.set(DeviceBus::new()).is_ok());
 
     DEVICE_BUS.get().unwrap().walk_fdt_root(fdt.root());
+
+    printk!("Walked DTS\n");
 
     loop {
         unsafe {

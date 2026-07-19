@@ -1,14 +1,13 @@
-use core::{
-    arch::{asm, naked_asm},
-    hint::black_box,
-    mem::take,
-};
+use core::arch::{asm, naked_asm};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR}, early_printk, impl_link, interrupts::{ExceptionRegisters, daifclr, daifset}, sched::mutex::Mutex, utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
+    allocators::{KBox, KERNEL_ALLOCATOR},
+    impl_link,
+    interrupts::{ExceptionRegisters, daifclr, daifset},
+    utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
 };
 
-const STACK_SIZE: usize = 4096 * 4;
+const STACK_SIZE: usize = 4096 * 16;
 
 #[repr(align(16))]
 struct TaskStack([u8; STACK_SIZE]);
@@ -183,7 +182,10 @@ impl Sched {
         registers.elr = (thread_wrapper as usize) as u64;
         registers.gprs[0] = (f as usize) as u64;
         registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
-        assert!(registers.gprs[31].is_multiple_of(16), "Stack ptr is not aligned");
+        assert!(
+            registers.gprs[31].is_multiple_of(16),
+            "Stack ptr is not aligned"
+        );
         registers.spsr = 0b0101;
         drop(registers);
 

@@ -1,14 +1,7 @@
 use core::any::Any;
 
 use crate::{
-    GIC,
-    arm_pl::disable_earlyconsole,
-    driver::Driver,
-    dtb::FdtNode,
-    interrupts::{IRQ_TABLE, can_block},
-    sched::WaitQueue,
-    subsystem::{ConsoleDriver, set_console},
-    utils::{Arc, MMIO},
+    GIC, arm_pl::disable_earlyconsole, driver::Driver, dtb::FdtNode, early_printk, interrupts::{IRQ_TABLE, can_block}, sched::WaitQueue, subsystem::{ConsoleDriver, set_console}, utils::{Arc, MMIO},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;
@@ -106,7 +99,7 @@ impl ConsoleDriver for Pl {
 }
 
 impl Driver for Pl {
-    fn new(node: &FdtNode) -> Self
+    fn new(node: &FdtNode) -> Result<Self, ()>
     where
         Self: Sized,
     {
@@ -115,10 +108,10 @@ impl Driver for Pl {
 
         let mmio = MMIO::new(addr as usize, size as usize);
 
-        Self {
+        Ok(Self {
             regs: mmio,
             wait_queue: WaitQueue::new(),
-        }
+        })
     }
 
     fn init(driver: Arc<Pl>, node: &FdtNode) {

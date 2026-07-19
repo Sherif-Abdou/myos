@@ -22,6 +22,19 @@ impl<T: ?Sized> ArcInner<T> {
     }
 }
 
+impl<const N: usize> Arc<[u8; N]> {
+    pub fn zeroed() -> Self {
+        let memory = KERNEL_ALLOCATOR
+            .allocate(Layout::new::<ArcInner<[u8; N]>>())
+            .unwrap();
+        let mut inner: NonNull<ArcInner<[u8; N]>> = memory.cast();
+
+        unsafe { inner.as_mut().count = AtomicUsize::new(1) };
+
+        Self { inner }
+    }
+}
+
 pub fn arc_inner_offset<T>() -> usize {
     offset_of!(ArcInner<T>, inner)
 }
@@ -112,6 +125,14 @@ impl<T> UniqueArc<T> {
     pub fn new(inner: T) -> Self {
         Self {
             inner: Arc::new(inner),
+        }
+    }
+}
+
+impl<const N: usize> UniqueArc<[u8; N]> {
+    pub fn zeroed() -> Self {
+        Self {
+            inner: Arc::zeroed(),
         }
     }
 }

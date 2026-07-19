@@ -2,10 +2,7 @@ mod pl;
 mod virtio;
 
 use crate::{
-    driver::pl::Pl,
-    dtb::FdtNode,
-    early_printk, impl_link,
-    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    driver::{pl::Pl, virtio::VirtioBlkDriver}, dtb::FdtNode, early_printk, impl_link, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 pub struct Device {
@@ -17,7 +14,7 @@ pub struct Device {
 impl_link!(Device, 0 => link);
 
 pub trait Driver {
-    fn new(node: &FdtNode) -> Self
+    fn new(node: &FdtNode) -> Result<Self, ()>
     where
         Self: Sized;
 
@@ -37,9 +34,11 @@ pub struct DeviceBus {
 macro_rules! check_driver {
     ($devices:expr,$node:expr,$compatible:expr,$driver:tt) => {
         if $compatible == $driver::compatible_string() {
-            early_printk!("Probing {}\n", $node.name());
 
-            let driver: UniqueArc<$driver> = UniqueArc::new($driver::new($node));
+            let Ok(driver) = $driver::new($node) else {
+                continue;
+            };
+            let driver: UniqueArc<$driver> = UniqueArc::new(driver);
             let driver: ListArc<$driver, 0> = driver.into();
             $driver::init(driver.clone_arc(), $node);
 
@@ -50,6 +49,7 @@ macro_rules! check_driver {
             });
 
             $devices.lock().push_back(device.into());
+            // continue;
         }
     };
 }
@@ -68,6 +68,7 @@ impl DeviceBus {
             };
 
             check_driver!(self.devices, node, compatible, Pl);
+            check_driver!(self.devices, node, compatible, VirtioBlkDriver);
         }
     }
 }
