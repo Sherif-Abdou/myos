@@ -1,6 +1,6 @@
 mod block;
 
-pub use block::{BlockCache, BlockDriver, set_disk, block_cache};
+pub use block::{BlockDriver, set_disk, block_cache};
 
 use core::fmt::Write;
 

@@ -1,7 +1,10 @@
-use core::any::Any;
+use core::{
+    any::Any,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+};
 
 use crate::{
-    impl_link, sched::{Mutex, WaitQueue, Workqueue}, utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
+    impl_link, sched::{Mutex, MutexGuard, WaitQueue, Workqueue}, utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
 };
 
 pub trait BlockDriver {
@@ -13,6 +16,8 @@ pub trait BlockDriver {
 static DISK: OnceSpinLock<Arc<dyn BlockDriver + Sync + 'static>> = OnceSpinLock::new();
 
 static BLOCK_CACHE: OnceSpinLock<BlockCache> = OnceSpinLock::new();
+
+const MAX_CACHE_SIZE: usize = 1024;
 
 pub fn set_disk(disk: Arc<dyn BlockDriver + Sync + 'static>) {
     let _ = DISK.set(disk);
@@ -92,6 +97,7 @@ impl BlockSectorEntry {
 pub struct BlockCache {
     sectors: Mutex<List<BlockSectorEntry>>,
     workqueue: Arc<Workqueue>,
+    cache_count: AtomicUsize,
 }
 
 impl BlockCache {
@@ -99,6 +105,7 @@ impl BlockCache {
         Self {
             sectors: Mutex::new(List::new()),
             workqueue: Workqueue::create_workqueue(),
+            cache_count: AtomicUsize::new(0),
         }
     }
 
@@ -108,12 +115,13 @@ impl BlockCache {
             .map(|arg| arg.downcast_ref::<BlockSectorEntry>().unwrap())
             .expect("Expected block entry to be passed in");
 
-
         let mut inner = entry.inner.lock();
+        inner.fetch_in_progress = true;
         let sector = inner.sector;
         inner.reset_from_disk(|entry_buffer| {
             DISK.get().unwrap().read_sector(sector, entry_buffer);
         });
+        inner.fetch_in_progress = false;
         entry.wait_queue.unblock_all();
     }
 
@@ -145,16 +153,32 @@ impl BlockCache {
             let _ = sector_cursor.next();
         }
 
+        self.cache_count.fetch_add(1, SeqCst);
         sector_cursor.insert_before(block_entry.into());
         let _ = sector_cursor.next_back();
 
         let block_entry = sector_cursor.get_arc().unwrap();
 
         block_entry.wait_queue.enqueue();
-        self.workqueue.enqueue_work(Self::fetch_wq_work, Some(block_entry.clone()));
+        self.workqueue
+            .enqueue_work(Self::fetch_wq_work, Some(block_entry.clone()));
         block_entry.wait_queue.block();
 
         block_entry
+    }
+
+    fn wait_for_fetch(sector: &BlockSectorEntry) -> MutexGuard<'_, BlockSectorEntryInner> {
+        loop {
+            let waitqueue = &sector.wait_queue;
+            let sector = sector.inner.lock();
+            if sector.fetch_in_progress {
+                waitqueue.enqueue();
+                drop(sector);
+                waitqueue.block();
+            } else {
+                return sector;
+            }
+        }
     }
 
     fn read_within_block(&self, block: u64, offset: usize, buf: &mut [u8]) -> usize {
@@ -169,7 +193,7 @@ impl BlockCache {
             .cursor()
             .find(|entry| entry.inner.lock().sector == block)
         {
-            let sector = sector.inner.lock();
+            let sector = Self::wait_for_fetch(sector);
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
         } else {
             let sector = self.fetch_block(block);
@@ -194,6 +218,10 @@ impl BlockCache {
             offset += to_read;
             buf = &mut buf[to_read..];
         }
+
+        if self.cache_count.load(SeqCst) > (9 * MAX_CACHE_SIZE) / 10 {
+            self.reclaim(None);
+        }
     }
 
     fn write_within_block(&self, block: u64, offset: usize, buf: &[u8]) -> usize {
@@ -202,7 +230,7 @@ impl BlockCache {
 
         let len = buf.len().min(max_len);
 
-        let sectors = self.sectors.lock();
+        let mut sectors = self.sectors.lock();
         if let Some(sector) = sectors
             .cursor()
             .find(|entry| entry.inner.lock().sector == block)
@@ -236,5 +264,41 @@ impl BlockCache {
             offset += to_write;
             buf = &buf[to_write..];
         }
+
+        let mut sectors = self.sectors.lock();
+        let mut cursor = sectors.cursor_mut();
+        while let Some(block) = cursor.get() {
+            if block.inner.lock().dirty {
+                self.workqueue
+                    .enqueue_work(Self::flush_wq_work, Some(cursor.get_arc().unwrap()))
+            }
+            cursor.next();
+        }
+
+        if self.cache_count.load(SeqCst) > (9 * MAX_CACHE_SIZE) / 10 {
+            self.reclaim(None);
+        }
+    }
+
+    fn reclaim(&self, _arg: Option<Arc<dyn Any + Send + Sync + 'static>>) {
+        let mut sectors = self.sectors.lock();
+        let mut count = self.cache_count.load(SeqCst);
+        let mut cursor = sectors.cursor_mut();
+
+        while let Some(entry) = cursor.get()
+            && count > (3 * MAX_CACHE_SIZE) / 4
+        {
+            let entry = entry.inner.lock();
+            if !entry.dirty && !entry.fetch_in_progress {
+                drop(entry);
+                cursor.remove();
+                count -= 1;
+            } else {
+                drop(entry);
+                let _ = cursor.next();
+            }
+        }
+
+        self.cache_count.store(count, SeqCst);
     }
 }

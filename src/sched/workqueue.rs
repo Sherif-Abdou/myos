@@ -1,7 +1,7 @@
-use core::{any::Any, arch::asm, mem::transmute};
+use core::{any::Any, mem::transmute};
 
 use crate::{
-    early_printk, impl_link, printk,
+    impl_link,
     sched::{SCHEDULER, WaitQueue},
     utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
 };
@@ -67,6 +67,6 @@ impl Workqueue {
             })
             .into(),
         );
-        // self.waiter.unblock_front();
+        self.waiter.unblock_front();
     }
 }

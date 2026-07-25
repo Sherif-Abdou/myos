@@ -4,7 +4,7 @@ use crate::{
     GIC, driver::{
         Driver,
         virtio::{Virtq, VirtqDescriptor},
-    }, dtb::FdtNode, early_printk, impl_link, interrupts::{IRQ_TABLE, daifclr}, printk, sched::{Mutex, WaitQueue}, subsystem::{BlockDriver, set_disk}, utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
+    }, dtb::FdtNode, impl_link, interrupts::{IRQ_TABLE}, sched::{Mutex, WaitQueue}, subsystem::{BlockDriver, set_disk}, utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
 };
 
 const DESCRIPTOR_BLOCK_SIZE: usize = 600;

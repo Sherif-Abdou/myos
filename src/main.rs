@@ -135,6 +135,7 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let mut data = [0u8; 16];
     block_cache().read(12 * 512, &mut data);
+    block_cache().write(12 * 512, &[1u8; 16]);
     printk!("Read data: {:?}\n", data);
 
     loop {
