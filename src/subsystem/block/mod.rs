@@ -1,0 +1,240 @@
+use core::any::Any;
+
+use crate::{
+    impl_link, sched::{Mutex, WaitQueue, Workqueue}, utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
+};
+
+pub trait BlockDriver {
+    fn read_sector(&self, sector: u64, buf: &mut [u8]);
+
+    fn write_sector(&self, sector: u64, buf: &[u8]);
+}
+
+static DISK: OnceSpinLock<Arc<dyn BlockDriver + Sync + 'static>> = OnceSpinLock::new();
+
+static BLOCK_CACHE: OnceSpinLock<BlockCache> = OnceSpinLock::new();
+
+pub fn set_disk(disk: Arc<dyn BlockDriver + Sync + 'static>) {
+    let _ = DISK.set(disk);
+    let _ = BLOCK_CACHE.set(BlockCache::new());
+}
+
+pub fn block_cache() -> &'static BlockCache {
+    BLOCK_CACHE.get().unwrap()
+}
+
+const BLOCK_SIZE: usize = 512;
+
+pub struct BlockSectorEntryInner {
+    sector: u64,
+    buffer: [u8; BLOCK_SIZE],
+    fetch_in_progress: bool,
+    dirty: bool,
+}
+
+impl BlockSectorEntryInner {
+    pub const fn new() -> Self {
+        Self {
+            sector: 0,
+            buffer: [0; BLOCK_SIZE],
+            fetch_in_progress: false,
+            dirty: false,
+        }
+    }
+
+    pub const fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    // Updates the contents of this block from disk.
+    //
+    // This marks the block as clean.
+    pub fn reset_from_disk<R>(&mut self, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        let ret = f(self.buffer.as_mut_slice());
+        self.dirty = false;
+
+        ret
+    }
+
+    // Modifies the contents of this block from a user.
+    //
+    // This marks the page as dirty.
+    pub fn modify_block<R>(&mut self, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        let ret = f(self.buffer.as_mut_slice());
+        self.dirty = true;
+
+        ret
+    }
+
+    pub fn mark_flushed(&mut self) {
+        self.dirty = false;
+    }
+}
+
+pub struct BlockSectorEntry {
+    inner: Mutex<BlockSectorEntryInner>,
+    wait_queue: WaitQueue,
+    link: ListLinks,
+}
+
+impl_link!(BlockSectorEntry, 0 => link);
+
+impl BlockSectorEntry {
+    pub const fn new() -> Self {
+        Self {
+            inner: Mutex::new(BlockSectorEntryInner::new()),
+            wait_queue: WaitQueue::new(),
+            link: ListLinks::new(),
+        }
+    }
+}
+
+pub struct BlockCache {
+    sectors: Mutex<List<BlockSectorEntry>>,
+    workqueue: Arc<Workqueue>,
+}
+
+impl BlockCache {
+    pub fn new() -> Self {
+        Self {
+            sectors: Mutex::new(List::new()),
+            workqueue: Workqueue::create_workqueue(),
+        }
+    }
+
+    fn fetch_wq_work(arg: Option<Arc<dyn Any + Send + Sync + 'static>>) {
+        let entry = arg
+            .as_ref()
+            .map(|arg| arg.downcast_ref::<BlockSectorEntry>().unwrap())
+            .expect("Expected block entry to be passed in");
+
+
+        let mut inner = entry.inner.lock();
+        let sector = inner.sector;
+        inner.reset_from_disk(|entry_buffer| {
+            DISK.get().unwrap().read_sector(sector, entry_buffer);
+        });
+        entry.wait_queue.unblock_all();
+    }
+
+    fn flush_wq_work(arg: Option<Arc<dyn Any + Send + Sync + 'static>>) {
+        let entry = arg
+            .as_ref()
+            .map(|arg| arg.downcast_ref::<BlockSectorEntry>().unwrap())
+            .expect("Expected block entry to be passed in");
+
+        let mut inner = entry.inner.lock();
+        let sector = inner.sector;
+        DISK.get()
+            .unwrap()
+            .write_sector(sector, inner.buffer.as_slice());
+        inner.mark_flushed();
+        entry.wait_queue.unblock_all();
+    }
+
+    fn fetch_block(&self, block_sector: u64) -> Arc<BlockSectorEntry> {
+        let block_entry = UniqueArc::new(BlockSectorEntry::new());
+        block_entry.inner.lock().sector = block_sector;
+
+        let mut sectors = self.sectors.lock();
+        let mut sector_cursor = sectors.cursor_mut();
+        while sector_cursor
+            .get()
+            .is_some_and(|block| block.inner.lock().sector < block_sector)
+        {
+            let _ = sector_cursor.next();
+        }
+
+        sector_cursor.insert_before(block_entry.into());
+        let _ = sector_cursor.next_back();
+
+        let block_entry = sector_cursor.get_arc().unwrap();
+
+        block_entry.wait_queue.enqueue();
+        self.workqueue.enqueue_work(Self::fetch_wq_work, Some(block_entry.clone()));
+        block_entry.wait_queue.block();
+
+        block_entry
+    }
+
+    fn read_within_block(&self, block: u64, offset: usize, buf: &mut [u8]) -> usize {
+        let block_offset = offset % BLOCK_SIZE;
+        let max_len = BLOCK_SIZE - block_offset;
+
+        let len = buf.len().min(max_len);
+
+        if let Some(sector) = self
+            .sectors
+            .lock()
+            .cursor()
+            .find(|entry| entry.inner.lock().sector == block)
+        {
+            let sector = sector.inner.lock();
+            buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
+        } else {
+            let sector = self.fetch_block(block);
+            let sector = sector.inner.lock();
+            buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
+        }
+
+        len
+    }
+
+    pub fn read(&self, offset: usize, buf: &mut [u8]) {
+        let mut buf = buf;
+        let mut offset = offset;
+
+        while !buf.is_empty() {
+            let block_index = offset / BLOCK_SIZE;
+            let block_offset = offset % BLOCK_SIZE;
+            let to_read = buf.len().min(BLOCK_SIZE - block_offset);
+
+            self.read_within_block(block_index as u64, block_offset, &mut buf[..to_read]);
+
+            offset += to_read;
+            buf = &mut buf[to_read..];
+        }
+    }
+
+    fn write_within_block(&self, block: u64, offset: usize, buf: &[u8]) -> usize {
+        let block_offset = offset % BLOCK_SIZE;
+        let max_len = BLOCK_SIZE - block_offset;
+
+        let len = buf.len().min(max_len);
+
+        let sectors = self.sectors.lock();
+        if let Some(sector) = sectors
+            .cursor()
+            .find(|entry| entry.inner.lock().sector == block)
+        {
+            let mut sector = sector.inner.lock();
+            sector.modify_block(|sector_buffer| {
+                sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);
+            });
+        } else {
+            let sector = self.fetch_block(block);
+            let mut sector = sector.inner.lock();
+            sector.modify_block(|sector_buffer| {
+                sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);
+            });
+        }
+
+        len
+    }
+
+    pub fn write(&self, offset: usize, buf: &[u8]) {
+        let mut buf = buf;
+        let mut offset = offset;
+
+        while !buf.is_empty() {
+            let block_index = offset / BLOCK_SIZE;
+            let block_offset = offset % BLOCK_SIZE;
+            let to_write = buf.len().min(BLOCK_SIZE - block_offset);
+
+            self.write_within_block(block_index as u64, block_offset, &buf[..to_write]);
+
+            offset += to_write;
+            buf = &buf[to_write..];
+        }
+    }
+}

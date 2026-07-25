@@ -171,7 +171,8 @@ impl Sched {
         }
     }
 
-    pub fn task_from_fn(&self, f: fn(*mut ())) {
+    #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
+    pub fn task_from_fn(&self, f: fn(*mut ()), arg: *mut ()) {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
@@ -179,8 +180,9 @@ impl Sched {
         });
 
         let mut registers = task.registers.lock();
-        registers.elr = (thread_wrapper as usize) as u64;
+        registers.elr = (thread_wrapper) as u64;
         registers.gprs[0] = (f as usize) as u64;
+        registers.gprs[1] = arg as u64;
         registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
         assert!(
             registers.gprs[31].is_multiple_of(16),

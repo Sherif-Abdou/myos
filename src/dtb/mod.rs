@@ -1,8 +1,6 @@
 mod parser;
 
-pub use parser::{Fdt, FdtNode, FdtProp};
-
-use crate::early_printk;
+pub use parser::{Fdt, FdtNode};
 
 pub fn find_earlyconsole_node(fdt: &Fdt) -> &FdtNode {
     let root = fdt.root();

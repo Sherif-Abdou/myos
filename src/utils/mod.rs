@@ -8,9 +8,8 @@ mod spin_lock;
 pub use arc::*;
 pub use core_lock::*;
 pub use intrusive_list::*;
-pub use mmio::MMIO;
+pub use mmio::Mmio;
 pub use spin_lock::*;
-pub use deque::Deque;
 
 pub const MAX_CPUS: usize = 8;
 

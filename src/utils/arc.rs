@@ -20,6 +20,14 @@ impl<T: ?Sized> ArcInner<T> {
     pub fn as_raw(&self) -> *const T {
         &raw const self.inner
     }
+
+    pub fn make_arc(&self) -> Arc<T> {
+        self.count.fetch_add(1, SeqCst);
+        let inner = (&raw const *self) as *mut ArcInner<T>;
+        Arc {
+            inner: unsafe { NonNull::new_unchecked(inner) },
+        }
+    }
 }
 
 impl<const N: usize> Arc<[u8; N]> {

@@ -2,11 +2,9 @@ use core::{
     cell::Cell,
     marker::{PhantomData, PhantomPinned},
     pin::Pin,
-    ptr::{NonNull, drop_in_place},
+    ptr::NonNull,
     sync::atomic::AtomicBool,
 };
-
-use alloc::{alloc::Allocator, boxed::Box};
 
 use crate::utils::{
     Arc,
@@ -132,7 +130,7 @@ macro_rules! impl_link {
     ($struct:ty,$($index:expr => $field:tt),*) => {
         $(
         impl $crate::utils::LinkedNode<$struct, $index> for $struct {
-            fn arc_from_link(link: *mut crate::utils::ListLinks) -> *mut crate::utils::ArcInner<$struct> {
+            fn arc_from_link(link: *mut $crate::utils::ListLinks) -> *mut $crate::utils::ArcInner<$struct> {
                 let value_ptr = unsafe { (&raw mut *link)
                     .byte_sub(::core::mem::offset_of!($struct, $field))
                     .cast::<$struct>()
@@ -140,17 +138,17 @@ macro_rules! impl_link {
 
                 unsafe {
                     value_ptr
-                        .byte_sub(crate::utils::arc_inner_offset::<$struct>())
-                        .cast::<crate::utils::ArcInner<$struct>>()
+                        .byte_sub($crate::utils::arc_inner_offset::<$struct>())
+                        .cast::<$crate::utils::ArcInner<$struct>>()
                 }
             }
 
-            fn link_from_arc(arc: *mut crate::utils::ArcInner<$struct>) -> *mut crate::utils::ListLinks {
-                let inner_ptr = unsafe { (&raw mut *arc).byte_add(crate::utils::arc_inner_offset::<$struct>()) };
+            fn link_from_arc(arc: *mut $crate::utils::ArcInner<$struct>) -> *mut $crate::utils::ListLinks {
+                let inner_ptr = unsafe { (&raw mut *arc).byte_add($crate::utils::arc_inner_offset::<$struct>()) };
 
                 unsafe { inner_ptr
                     .byte_add(::core::mem::offset_of!($struct, $field))
-                    .cast::<crate::utils::ListLinks>()
+                    .cast::<$crate::utils::ListLinks>()
                 }
             }
         }
@@ -212,6 +210,9 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
     }
 
     pub fn remove_front(&mut self) -> Option<ListArc<T, N>> {
+        if self.is_empty() {
+            return None;
+        }
         let next_ptr = unsafe { self.sentinel().next() };
 
         if let Some(link) = next_ptr {
@@ -229,6 +230,9 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
     }
 
     pub fn remove_back(&mut self) -> Option<ListArc<T, N>> {
+        if self.is_empty() {
+            return None;
+        }
         let prev_ptr = unsafe { self.sentinel().prev() };
 
         if let Some(link) = prev_ptr {
@@ -257,14 +261,45 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
         self.head.next.get().unwrap().addr().get() == self.sentinel_addr()
     }
 
-    pub fn iter(&self) -> ListCursor<'_, T, N> {
-        ListCursor {
-            ptr: self.head.next.get(),
-            list: self,
+    pub fn cursor(&self) -> ListCursor<'_, T, N> {
+        if self
+            .head
+            .next
+            .get()
+            .is_some_and(|next| next.addr().get() != self.sentinel_addr())
+        {
+            ListCursor {
+                ptr: self.head.next.get(),
+                list: self,
+            }
+        } else {
+            ListCursor {
+                ptr: None,
+                list: self,
+            }
         }
     }
 
-    pub unsafe fn iter_at(&self, node: &Arc<T>) -> ListCursor<'_, T, N> {
+    pub fn cursor_mut(&mut self) -> ListCursorMut<'_, T, N> {
+        if self
+            .head
+            .next
+            .get()
+            .is_some_and(|next| next.addr().get() != self.sentinel_addr())
+        {
+            ListCursorMut {
+                ptr: self.head.next.get(),
+                list: self,
+            }
+        } else {
+            ListCursorMut {
+                ptr: unsafe { NonNull::new(self.head.as_mut()) },
+                list: self,
+            }
+        }
+    }
+
+    pub unsafe fn cursor_at(&self, node: &Arc<T>) -> ListCursor<'_, T, N> {
         let link = T::link_from_arc(unsafe { node.as_inner_ptr() } as *mut _);
 
         ListCursor {
@@ -325,5 +360,147 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursor<'a, T, N> {
 
             unsafe { (*arc_inner).as_raw().as_ref().unwrap() }
         })
+    }
+}
+
+pub struct ListCursorMut<'a, T: LinkedNode<T, N>, const N: usize = 0> {
+    list: &'a mut List<T, N>,
+    ptr: Option<NonNull<ListLinks>>,
+}
+
+impl<'a, T: LinkedNode<T, N>, const N: usize> Iterator for ListCursorMut<'a, T, N> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_sentinel() {
+            self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().next.get() });
+            return None;
+        }
+
+        let item = self.ptr.map(|ptr| {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            unsafe { (*arc_inner).as_raw().as_ref().unwrap() }
+        });
+
+        self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().next.get() });
+
+        item
+    }
+}
+
+impl<'a, T: LinkedNode<T, N>, const N: usize> DoubleEndedIterator for ListCursorMut<'a, T, N> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.is_sentinel() {
+            self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().prev.get() });
+            return None;
+        }
+
+        let item = self.ptr.map(|ptr| {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            unsafe { (*arc_inner).as_raw().as_ref().unwrap() }
+        });
+
+        self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().prev.get() });
+
+        item
+    }
+}
+
+impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursorMut<'a, T, N> {
+    fn is_sentinel(&self) -> bool {
+        self.ptr.unwrap().addr().get() == self.list.sentinel_addr()
+    }
+
+    pub fn get(&self) -> Option<&T> {
+        if self.is_sentinel() {
+            return None;
+        }
+        self.ptr.map(|ptr| {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            unsafe { (*arc_inner).as_raw().as_ref().unwrap() }
+        })
+    }
+
+    pub fn get_arc(&self) -> Option<Arc<T>> {
+        if self.is_sentinel() {
+            return None;
+        }
+
+        self.ptr.map(|ptr| {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            unsafe { (*arc_inner).make_arc() }
+        })
+    }
+
+    pub fn insert_after(&mut self, item: ListArc<T, N>) {
+        if self.ptr.is_none() || self.is_sentinel() {
+            self.list.push_front(item);
+            return;
+        }
+        let inner = unsafe { ListArc::into_arc_inner(item).as_ptr() };
+        let new_link = unsafe { Pin::new_unchecked(T::link_from_arc(inner).as_ref().unwrap()) };
+
+        if let Some(ptr) = self.ptr {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            unsafe {
+                link.insert_after(new_link);
+            }
+        }
+    }
+
+    pub fn insert_before(&mut self, item: ListArc<T, N>) {
+        if self.ptr.is_none()  || self.is_sentinel() {
+            self.list.push_back(item);
+            return;
+        }
+        let inner = unsafe { ListArc::into_arc_inner(item).as_ptr() };
+        let new_link = unsafe { Pin::new_unchecked(T::link_from_arc(inner).as_ref().unwrap()) };
+
+        if let Some(ptr) = self.ptr {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            unsafe {
+                link.insert_before(new_link);
+            }
+        }
+    }
+
+    pub fn remove(&mut self) -> ListArc<T, N> {
+        if self.is_sentinel() {
+            panic!("Cannot remove from an empty list.");
+        }
+        let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(self.ptr.unwrap().as_ref()) };
+        let next_ptr = unsafe { (*self.ptr.unwrap().as_ptr()).next.get() };
+
+        unsafe {
+            link.remove();
+            if next_ptr.unwrap().addr().get() != self.list.sentinel_addr() {
+                self.ptr = next_ptr;
+            } else {
+                self.ptr = None;
+            }
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            ListArc::from_arc_inner(NonNull::new_unchecked(arc_inner))
+        }
     }
 }

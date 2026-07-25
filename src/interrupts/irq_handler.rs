@@ -51,18 +51,17 @@ pub struct ExceptionRegisters {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+extern "C" fn sexc_handler(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     early_printk!("EXCEPTION: \n");
     loop {
         unsafe {
             asm!("wfi");
         }
     }
-    regs
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn irq_handler(mut regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+extern "C" fn irq_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let irq = Gic::acknowledge();
     IRQ_BOOL.store(true, SeqCst);
 

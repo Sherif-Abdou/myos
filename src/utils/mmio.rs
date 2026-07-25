@@ -1,13 +1,13 @@
-pub struct MMIO {
+pub struct Mmio {
     base: *mut u8,
     size: usize,
 }
 
 // MMIO is expected to be synchronized through device memory rules in arm.
-unsafe impl Sync for MMIO {}
-unsafe impl Send for MMIO {}
+unsafe impl Sync for Mmio {}
+unsafe impl Send for Mmio {}
 
-impl MMIO {
+impl Mmio {
     pub const fn new(physical_base: usize, size: usize) -> Self {
         Self {
             base: (physical_base | 0xffffff80_00000000) as *mut u8,

@@ -103,7 +103,7 @@ impl FdtProp {
         self.value.map(|ptr| unsafe {
             ptr.as_ptr()
                 .cast::<u32>()
-                .offset(index as isize)
+                .add(index)
                 .read()
                 .swap_bytes()
         })

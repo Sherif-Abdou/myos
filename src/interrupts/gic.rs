@@ -1,7 +1,7 @@
 use crate::{
     dtb::FdtNode,
     read_sysreg,
-    utils::{MMIO, PerCpuLock, SpinLock},
+    utils::{Mmio, PerCpuLock, SpinLock},
     write_sysreg,
 };
 
@@ -116,7 +116,7 @@ impl Gic {
         let distributor_size = node.read_u64("reg", 1).unwrap();
 
         let distributor = SpinLock::new(GicDistributor {
-            distributor_base: MMIO::new(distributor_base as usize, distributor_size as usize),
+            distributor_base: Mmio::new(distributor_base as usize, distributor_size as usize),
         });
 
         distributor.lock().init();
@@ -125,7 +125,7 @@ impl Gic {
         let redistributor_size = node.read_u64("reg", 3).unwrap();
 
         let redistributors = PerCpuLock::from_fn(|cpu_id| {
-            let mmio = MMIO::new(
+            let mmio = Mmio::new(
                 redistributor_base as usize + 0x20000 * cpu_id,
                 redistributor_size as usize,
             );
@@ -151,6 +151,10 @@ impl Gic {
 
     pub fn enable_spi(&self, irqn: usize) {
         self.distributor.lock().enable_spi(irqn);
+    }
+
+    pub fn configure_spi(&self, irqn: usize, config: u32) {
+        self.distributor.lock().configure_spi(irqn, config);
     }
 
     pub fn disable_spi(&self, irqn: usize) {
@@ -192,11 +196,11 @@ impl Gic {
 }
 
 struct GicDistributor {
-    distributor_base: MMIO,
+    distributor_base: Mmio,
 }
 
 struct GicRedistributor {
-    redistributor_base: MMIO,
+    redistributor_base: Mmio,
 }
 
 impl GicRedistributor {
@@ -266,6 +270,18 @@ impl GicDistributor {
         // while unsafe { self.distributor_base.read_u32(GICD_CTRL) & (1 << 31) } != 0 {
         //     core::hint::spin_loop();
         // }
+    }
+
+    pub fn configure_spi(&self, irqn: usize, config: u32) {
+        let index = (irqn) / 16;
+        let offset = ((irqn) % 16) * 2;
+
+        unsafe {
+            self.distributor_base
+                .modify_u32(gicd_icfgr(index), |before| {
+                    before | (config & 0x3) << offset
+                });
+        }
     }
 
     pub fn disable_spi(&self, irqn: usize) {

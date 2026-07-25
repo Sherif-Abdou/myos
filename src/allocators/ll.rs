@@ -88,9 +88,7 @@ impl LLCursor {
         unsafe {
             (*ptr).next = self.hole;
             if !self.previous.is_null() {
-                unsafe {
-                    (*self.previous).next = ptr;
-                }
+                (*self.previous).next = ptr;
             } else {
                 self.head.write(ptr);
             }

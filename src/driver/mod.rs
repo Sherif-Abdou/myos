@@ -2,7 +2,7 @@ mod pl;
 mod virtio;
 
 use crate::{
-    driver::{pl::Pl, virtio::VirtioBlkDriver}, dtb::FdtNode, early_printk, impl_link, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    driver::{pl::Pl, virtio::VirtioBlkDriver}, dtb::FdtNode, impl_link, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 pub struct Device {

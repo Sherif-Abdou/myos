@@ -7,10 +7,10 @@ pub use ll::LLAllocator;
 struct FakeAllocator;
 
 unsafe impl core::alloc::GlobalAlloc for FakeAllocator {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+    unsafe fn alloc(&self, _layout: core::alloc::Layout) -> *mut u8 {
         panic!("Global Allocator Not supported");
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
         panic!("Global Allocator Not supported");
     }
 }

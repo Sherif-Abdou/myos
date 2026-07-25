@@ -20,8 +20,9 @@ BASE_COMMAND:= qemu-system-aarch64 \
 		-kernel $(OS_PATH) \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
-		-device virtio-serial-device \
 		-chardev stdio,id=ch0,mux=on \
+		-drive if=none,file=disk.qcow2,format=qcow2,id=hd0 \
+		-device virtio-blk-device,drive=hd0 \
 		-serial chardev:ch0
 else
 BASE_COMMAND:=qemu-system-aarch64 \
@@ -31,6 +32,7 @@ BASE_COMMAND:=qemu-system-aarch64 \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-device virtio-serial-device \
+		-drive if=virtio-mmio,file=disk.qcow2,format=qcow2 \
 		-serial chardev:ch0
 endif
 
@@ -40,10 +42,8 @@ virt.dtb: $(TARGET)
 		-display none \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
-		-device virtio-serial-device \
-		-device virtconsole,chardev=ch0 \
-		-chardev stdio,id=ch0,mux=on \
-		-mon chardev=ch0,mode=readline
+		-drive if=none,file=disk.qcow2,format=qcow2,id=hd0 \
+		-device virtio-blk-device,drive=hd0 \
 
 debug: $(TARGET) virt.dtb
 	cargo b

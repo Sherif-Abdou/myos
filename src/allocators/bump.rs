@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use alloc::alloc::{AllocError, Allocator};
 
-use crate::{early_printk, utils::CoreLock};
+use crate::utils::CoreLock;
 
 pub struct BumpAllocator {
     current: NonNull<u8>,
@@ -43,5 +43,5 @@ unsafe impl Allocator for CoreLock<BumpAllocator> {
     }
 
     // Deallocation as a concept does not exist. The entire bump allocator must be cleared at once.
-    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {}
+    unsafe fn deallocate(&self, _ptr: core::ptr::NonNull<u8>, _layout: core::alloc::Layout) {}
 }

@@ -2,7 +2,6 @@
 #![no_main]
 #![allow(dead_code)]
 #![feature(allocator_api)]
-#![feature(maybe_uninit_array_assume_init)]
 #![feature(unsize)]
 #![feature(coerce_unsized)]
 
@@ -26,15 +25,7 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox},
-    arm_pl::init_from_dtb_node,
-    driver::DeviceBus,
-    dtb::{Fdt, find_earlyconsole_node},
-    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
-    memory::init_allocator,
-    sched::{SCHEDULER, init_scheduler},
-    timer::ArmTimer,
-    utils::OnceSpinLock,
+    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, init_scheduler}, subsystem::block_cache, timer::ArmTimer, utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -93,10 +84,11 @@ extern "C" fn entry() {
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
 
+
     IRQ_TABLE.lock().register_interrupt(
         27,
         |_| {
-            ArmTimer::wait(1_000_000);
+            ArmTimer::wait(1_000);
 
             if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
                 *RETURN_TABLE.lock() = Some(new_ret);
@@ -110,7 +102,8 @@ extern "C" fn entry() {
     init_scheduler();
 
     early_printk!("Scheduler initialized, starting full boot.\n");
-    SCHEDULER.get().unwrap().task_from_fn(threaded_init);
+    SCHEDULER.get().unwrap().task_from_fn(threaded_idle, core::ptr::null_mut());
+    SCHEDULER.get().unwrap().task_from_fn(threaded_init, core::ptr::null_mut());
     daifclr();
 
     loop {
@@ -120,7 +113,18 @@ extern "C" fn entry() {
 
 pub static DEVICE_BUS: OnceSpinLock<DeviceBus> = OnceSpinLock::new();
 
+pub fn threaded_idle(_arg: *mut ()) {
+    daifclr();
+
+    loop {
+        unsafe {
+            asm!("wfi");
+        }
+    }
+}
+
 pub fn threaded_init(_arg: *mut ()) {
+    daifclr();
     let fdt = FDT.get().unwrap();
 
     assert!(DEVICE_BUS.set(DeviceBus::new()).is_ok());
@@ -128,6 +132,10 @@ pub fn threaded_init(_arg: *mut ()) {
     DEVICE_BUS.get().unwrap().walk_fdt_root(fdt.root());
 
     printk!("Walked DTS\n");
+
+    let mut data = [0u8; 16];
+    block_cache().read(12 * 512, &mut data);
+    printk!("Read data: {:?}\n", data);
 
     loop {
         unsafe {

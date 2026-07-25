@@ -30,7 +30,7 @@ impl<T> Mutex<T> {
             {
                 return MutexGuard { mutex: self };
             } else {
-                self.wait_queue.block_this_task();
+                self.wait_queue.enqueue_and_block();
             }
         }
     }

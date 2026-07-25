@@ -1,7 +1,7 @@
 use core::any::Any;
 
 use crate::{
-    GIC, arm_pl::disable_earlyconsole, driver::Driver, dtb::FdtNode, early_printk, interrupts::{IRQ_TABLE, can_block}, sched::WaitQueue, subsystem::{ConsoleDriver, set_console}, utils::{Arc, MMIO},
+    GIC, arm_pl::disable_earlyconsole, driver::Driver, dtb::FdtNode, interrupts::{IRQ_TABLE, can_block}, sched::WaitQueue, subsystem::{ConsoleDriver, set_console}, utils::{Arc, Mmio},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;
@@ -45,7 +45,7 @@ fn irq_handler(driver: Option<&Arc<dyn Any + Send + Sync + 'static>>) {
 }
 
 pub struct Pl {
-    regs: MMIO,
+    regs: Mmio,
     wait_queue: WaitQueue,
 }
 
@@ -84,7 +84,7 @@ impl ConsoleDriver for Pl {
         for c in buf {
             while unsafe { self.regs.read_u16(UARTFR) } & (1 << 5) != 0 {
                 if can_block() {
-                    self.wait_queue.block_this_task();
+                    self.wait_queue.enqueue_and_block();
                     self.enable_tx_irq();
                 } else {
                     core::hint::spin_loop();
@@ -106,7 +106,7 @@ impl Driver for Pl {
         let addr = node.read_u64("reg", 0).unwrap();
         let size = node.read_u64("reg", 1).unwrap();
 
-        let mmio = MMIO::new(addr as usize, size as usize);
+        let mmio = Mmio::new(addr as usize, size as usize);
 
         Ok(Self {
             regs: mmio,
@@ -114,7 +114,7 @@ impl Driver for Pl {
         })
     }
 
-    fn init(driver: Arc<Pl>, node: &FdtNode) {
+    fn init(driver: Arc<Pl>, _node: &FdtNode) {
         driver.setup_fifo();
 
         IRQ_TABLE
