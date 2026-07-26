@@ -50,7 +50,7 @@ SECTIONS
       .heap (NOLOAD) : ALIGN(4096)
       {
         __heap_start = .;
-        . += ALIGN(16384, 16);
+        . += ALIGN(65536, 16);
         __heap_end = .;
       } > KERNEL
 
