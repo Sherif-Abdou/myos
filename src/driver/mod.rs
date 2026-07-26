@@ -2,7 +2,10 @@ mod pl;
 mod virtio;
 
 use crate::{
-    driver::{pl::Pl, virtio::VirtioBlkDriver}, dtb::FdtNode, impl_link, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    driver::{pl::Pl, virtio::VirtioBlkDriver},
+    dtb::FdtNode,
+    impl_link,
+    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 pub struct Device {
@@ -34,7 +37,6 @@ pub struct DeviceBus {
 macro_rules! check_driver {
     ($devices:expr,$node:expr,$compatible:expr,$driver:tt) => {
         if $compatible == $driver::compatible_string() {
-
             let Ok(driver) = $driver::new($node) else {
                 continue;
             };

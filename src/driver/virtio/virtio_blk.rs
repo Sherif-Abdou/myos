@@ -1,10 +1,17 @@
 use core::{any::Any, mem::MaybeUninit, ptr::read_volatile, sync::atomic::fence};
 
 use crate::{
-    GIC, driver::{
+    GIC,
+    driver::{
         Driver,
         virtio::{Virtq, VirtqDescriptor},
-    }, dtb::FdtNode, impl_link, interrupts::{IRQ_TABLE}, sched::{Mutex, WaitQueue}, subsystem::{BlockDriver, set_disk}, utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
+    },
+    dtb::FdtNode,
+    impl_link,
+    interrupts::IRQ_TABLE,
+    sched::{Mutex, WaitQueue},
+    subsystem::{BlockDriver, set_disk},
+    utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
 };
 
 const DESCRIPTOR_BLOCK_SIZE: usize = 600;
@@ -19,7 +26,6 @@ fn irq_handler(driver: Option<&Arc<dyn Any + Send + Sync + 'static>>) {
         .expect("Driver must be passed in");
 
     let status = unsafe { driver.mmio.read_u32(0x60) };
-
 
     if status & (1 << 0) != 0 {
         driver.wait_queue.unblock_front();
@@ -172,7 +178,6 @@ impl VirtioBlkDriver {
     fn init_irq(driver: &Arc<Self>, fdt: &FdtNode) {
         let irqn = fdt.read_u32("interrupts", 1).unwrap();
 
-
         IRQ_TABLE
             .lock()
             .register_interrupt((irqn + 32) as u64, irq_handler, Some(driver.clone()));
@@ -282,5 +287,4 @@ impl BlockDriver for VirtioBlkDriver {
         let buffer = &self.descriptors.lock().buffers[buffer_descriptor_idx].buf;
         bytes.copy_from_slice(&buffer[..bytes.len()]);
     }
-
 }

@@ -8,7 +8,7 @@ pub(crate) struct VirtqDescriptor {
     pub(crate) addr: usize,
     pub(crate) len: u32,
     pub(crate) flags: u16,
-    pub(crate) next: u16
+    pub(crate) next: u16,
 }
 
 #[repr(C)]

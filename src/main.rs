@@ -25,7 +25,16 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, init_scheduler}, subsystem::block_cache, timer::ArmTimer, utils::OnceSpinLock,
+    allocators::{KBox, kbox},
+    arm_pl::init_from_dtb_node,
+    driver::DeviceBus,
+    dtb::{Fdt, find_earlyconsole_node},
+    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
+    memory::init_allocator,
+    sched::{SCHEDULER, init_scheduler},
+    subsystem::block_cache,
+    timer::ArmTimer,
+    utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -84,7 +93,6 @@ extern "C" fn entry() {
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
 
-
     IRQ_TABLE.lock().register_interrupt(
         27,
         |_| {
@@ -102,8 +110,14 @@ extern "C" fn entry() {
     init_scheduler();
 
     early_printk!("Scheduler initialized, starting full boot.\n");
-    SCHEDULER.get().unwrap().task_from_fn(threaded_idle, core::ptr::null_mut());
-    SCHEDULER.get().unwrap().task_from_fn(threaded_init, core::ptr::null_mut());
+    SCHEDULER
+        .get()
+        .unwrap()
+        .task_from_fn(threaded_idle, core::ptr::null_mut());
+    SCHEDULER
+        .get()
+        .unwrap()
+        .task_from_fn(threaded_init, core::ptr::null_mut());
     daifclr();
 
     loop {

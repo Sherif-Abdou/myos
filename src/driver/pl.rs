@@ -1,7 +1,14 @@
 use core::any::Any;
 
 use crate::{
-    GIC, arm_pl::disable_earlyconsole, driver::Driver, dtb::FdtNode, interrupts::{IRQ_TABLE, can_block}, sched::WaitQueue, subsystem::{ConsoleDriver, set_console}, utils::{Arc, Mmio},
+    GIC,
+    arm_pl::disable_earlyconsole,
+    driver::Driver,
+    dtb::FdtNode,
+    interrupts::{IRQ_TABLE, can_block},
+    sched::WaitQueue,
+    subsystem::{ConsoleDriver, set_console},
+    utils::{Arc, Mmio},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;

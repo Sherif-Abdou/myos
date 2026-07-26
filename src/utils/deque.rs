@@ -68,4 +68,3 @@ impl<T, const N: usize> Deque<T, N> {
         }
     }
 }
-

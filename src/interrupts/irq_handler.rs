@@ -1,4 +1,8 @@
-use core::{any::Any, arch::asm, sync::atomic::{AtomicBool, Ordering::SeqCst}};
+use core::{
+    any::Any,
+    arch::asm,
+    sync::atomic::{AtomicBool, Ordering::SeqCst},
+};
 
 use crate::{
     Gic, early_printk,

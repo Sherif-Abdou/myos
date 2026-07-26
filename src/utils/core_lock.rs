@@ -127,7 +127,7 @@ pub struct PerCpuLock<T> {
 impl<T> PerCpuLock<Option<T>> {
     pub const fn nones() -> Self {
         Self {
-            inner: [const { MaybeUninit::new(CoreLock::new(None)) }; MAX_CPUS]
+            inner: [const { MaybeUninit::new(CoreLock::new(None)) }; MAX_CPUS],
         }
     }
 }

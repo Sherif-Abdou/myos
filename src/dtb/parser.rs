@@ -100,13 +100,8 @@ impl FdtProp {
     }
 
     pub fn read_u32(&self, index: usize) -> Option<u32> {
-        self.value.map(|ptr| unsafe {
-            ptr.as_ptr()
-                .cast::<u32>()
-                .add(index)
-                .read()
-                .swap_bytes()
-        })
+        self.value
+            .map(|ptr| unsafe { ptr.as_ptr().cast::<u32>().add(index).read().swap_bytes() })
     }
 
     pub fn read_u64(&self, index: usize) -> Option<u64> {

@@ -1,5 +1,7 @@
 use crate::{
-    impl_link, sched::{SCHEDULER, Task, sched_yield}, utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
+    impl_link,
+    sched::{SCHEDULER, Task, sched_yield},
+    utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
 };
 
 pub struct WaitQueueNode {

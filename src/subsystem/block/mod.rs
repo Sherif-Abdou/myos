@@ -4,7 +4,9 @@ use core::{
 };
 
 use crate::{
-    impl_link, sched::{Mutex, MutexGuard, WaitQueue, Workqueue}, utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
+    impl_link,
+    sched::{Mutex, MutexGuard, WaitQueue, Workqueue},
+    utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
 };
 
 pub trait BlockDriver {
@@ -230,7 +232,7 @@ impl BlockCache {
 
         let len = buf.len().min(max_len);
 
-        let mut sectors = self.sectors.lock();
+        let sectors = self.sectors.lock();
         if let Some(sector) = sectors
             .cursor()
             .find(|entry| entry.inner.lock().sector == block)

@@ -466,7 +466,7 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursorMut<'a, T, N> {
     }
 
     pub fn insert_before(&mut self, item: ListArc<T, N>) {
-        if self.ptr.is_none()  || self.is_sentinel() {
+        if self.ptr.is_none() || self.is_sentinel() {
             self.list.push_back(item);
             return;
         }
