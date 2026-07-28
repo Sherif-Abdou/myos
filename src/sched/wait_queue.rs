@@ -32,8 +32,6 @@ impl WaitQueue {
     }
 
     pub fn block(&self) {
-        SCHEDULER.get().unwrap().block_this_task();
-
         sched_yield();
     }
 
@@ -50,6 +48,27 @@ impl WaitQueue {
             })
             .into(),
         );
+        SCHEDULER.get().unwrap().block_this_task();
+    }
+
+    pub fn prepare_enqueue(&self, f: impl FnOnce() -> bool) {
+        let mut wait_queue = self.queue.lock();
+        let should_wait = f();
+
+        if should_wait {
+            let this_task = SCHEDULER.get().unwrap().task();
+            if wait_queue.is_none() {
+                *wait_queue = Some(List::new());
+            }
+            wait_queue.as_mut().unwrap().push_back(
+                UniqueArc::new(WaitQueueNode {
+                    task: this_task.unwrap(),
+                    links: ListLinks::new(),
+                })
+                .into(),
+            );
+            SCHEDULER.get().unwrap().block_this_task();
+        }
     }
 
     pub fn unblock_front(&self) {

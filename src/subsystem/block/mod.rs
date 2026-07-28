@@ -40,9 +40,9 @@ pub struct BlockSectorEntryInner {
 }
 
 impl BlockSectorEntryInner {
-    pub const fn new() -> Self {
+    pub const fn new(sector: u64) -> Self {
         Self {
-            sector: 0,
+            sector,
             buffer: [0; BLOCK_SIZE],
             fetch_in_progress: false,
             dirty: false,
@@ -53,9 +53,9 @@ impl BlockSectorEntryInner {
         self.dirty
     }
 
-    // Updates the contents of this block from disk.
-    //
-    // This marks the block as clean.
+    /// Updates the contents of this block from disk.
+    ///
+    /// This marks the block as clean.
     pub fn reset_from_disk<R>(&mut self, f: impl FnOnce(&mut [u8]) -> R) -> R {
         let ret = f(self.buffer.as_mut_slice());
         self.dirty = false;
@@ -63,9 +63,9 @@ impl BlockSectorEntryInner {
         ret
     }
 
-    // Modifies the contents of this block from a user.
-    //
-    // This marks the page as dirty.
+    /// Modifies the contents of this block from a user.
+    ///
+    /// This marks the page as dirty.
     pub fn modify_block<R>(&mut self, f: impl FnOnce(&mut [u8]) -> R) -> R {
         let ret = f(self.buffer.as_mut_slice());
         self.dirty = true;
@@ -87,12 +87,16 @@ pub struct BlockSectorEntry {
 impl_link!(BlockSectorEntry, 0 => link);
 
 impl BlockSectorEntry {
-    pub const fn new() -> Self {
+    pub const fn new(sector: u64) -> Self {
         Self {
-            inner: Mutex::new(BlockSectorEntryInner::new()),
+            inner: Mutex::new(BlockSectorEntryInner::new(sector)),
             wait_queue: WaitQueue::new(),
             link: ListLinks::new(),
         }
+    }
+
+    pub fn lock_inner(&self) -> MutexGuard<'_, BlockSectorEntryInner> {
+        self.inner.lock()
     }
 }
 
@@ -133,7 +137,7 @@ impl BlockCache {
             .map(|arg| arg.downcast_ref::<BlockSectorEntry>().unwrap())
             .expect("Expected block entry to be passed in");
 
-        let mut inner = entry.inner.lock();
+        let mut inner = entry.lock_inner();
         let sector = inner.sector;
         DISK.get()
             .unwrap()
@@ -143,14 +147,13 @@ impl BlockCache {
     }
 
     fn fetch_block(&self, block_sector: u64) -> Arc<BlockSectorEntry> {
-        let block_entry = UniqueArc::new(BlockSectorEntry::new());
-        block_entry.inner.lock().sector = block_sector;
+        let block_entry = UniqueArc::new(BlockSectorEntry::new(block_sector));
 
         let mut sectors = self.sectors.lock();
         let mut sector_cursor = sectors.cursor_mut();
         while sector_cursor
             .get()
-            .is_some_and(|block| block.inner.lock().sector < block_sector)
+            .is_some_and(|block| block.lock_inner().sector < block_sector)
         {
             let _ = sector_cursor.next();
         }
@@ -172,7 +175,7 @@ impl BlockCache {
     fn wait_for_fetch(sector: &BlockSectorEntry) -> MutexGuard<'_, BlockSectorEntryInner> {
         loop {
             let waitqueue = &sector.wait_queue;
-            let sector = sector.inner.lock();
+            let sector = sector.lock_inner();
             if sector.fetch_in_progress {
                 waitqueue.enqueue();
                 drop(sector);
@@ -193,13 +196,13 @@ impl BlockCache {
             .sectors
             .lock()
             .cursor()
-            .find(|entry| entry.inner.lock().sector == block)
+            .find(|entry| entry.lock_inner().sector == block)
         {
             let sector = Self::wait_for_fetch(sector);
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
         } else {
             let sector = self.fetch_block(block);
-            let sector = sector.inner.lock();
+            let sector = sector.lock_inner();
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
         }
 
@@ -235,15 +238,15 @@ impl BlockCache {
         let sectors = self.sectors.lock();
         if let Some(sector) = sectors
             .cursor()
-            .find(|entry| entry.inner.lock().sector == block)
+            .find(|entry| entry.lock_inner().sector == block)
         {
-            let mut sector = sector.inner.lock();
+            let mut sector = sector.lock_inner();
             sector.modify_block(|sector_buffer| {
                 sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);
             });
         } else {
             let sector = self.fetch_block(block);
-            let mut sector = sector.inner.lock();
+            let mut sector = sector.lock_inner();
             sector.modify_block(|sector_buffer| {
                 sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);
             });
@@ -270,7 +273,7 @@ impl BlockCache {
         let mut sectors = self.sectors.lock();
         let mut cursor = sectors.cursor_mut();
         while let Some(block) = cursor.get() {
-            if block.inner.lock().dirty {
+            if block.lock_inner().dirty {
                 self.workqueue
                     .enqueue_work(Self::flush_wq_work, Some(cursor.get_arc().unwrap()))
             }
@@ -290,7 +293,7 @@ impl BlockCache {
         while let Some(entry) = cursor.get()
             && count > (3 * MAX_CACHE_SIZE) / 4
         {
-            let entry = entry.inner.lock();
+            let entry = entry.lock_inner();
             if !entry.dirty && !entry.fetch_in_progress {
                 drop(entry);
                 cursor.remove();
