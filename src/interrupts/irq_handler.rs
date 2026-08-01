@@ -5,9 +5,7 @@ use core::{
 };
 
 use crate::{
-    Gic, early_printk,
-    sched::SCHEDULER,
-    utils::{Arc, PerCpuLock, SpinLock},
+    Gic, early_printk, printk, read_sysreg, sched::SCHEDULER, utils::{Arc, PerCpuLock, SpinLock},
 };
 
 pub static RETURN_TABLE: PerCpuLock<Option<*const ExceptionRegisters>> = PerCpuLock::nones();
@@ -55,8 +53,50 @@ pub struct ExceptionRegisters {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn sexc_handler(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     early_printk!("EXCEPTION: \n");
+    let far: u64;
+    unsafe { read_sysreg!(far, FAR_EL1); }
+    let elr: u64;
+    unsafe { read_sysreg!(elr, ELR_EL1); }
+
+    printk!("EXCEPTION at 0x{:x}, FAR 0x{:x} \n", elr, far);
+    unsafe {
+        printk!("x0: {:x}\n", (*regs).gprs[0]);
+        printk!("x1: {:x}\n", (*regs).gprs[1]);
+        printk!("x2: {:x}\n", (*regs).gprs[2]);
+        printk!("x3: {:x}\n", (*regs).gprs[3]);
+        printk!("x4: {:x}\n", (*regs).gprs[4]);
+        printk!("x5: {:x}\n", (*regs).gprs[5]);
+        printk!("x6: {:x}\n", (*regs).gprs[6]);
+        printk!("x7: {:x}\n", (*regs).gprs[7]);
+        printk!("x8: {:x}\n", (*regs).gprs[8]);
+        printk!("x9: {:x}\n", (*regs).gprs[9]);
+        printk!("x10: {:x}\n", (*regs).gprs[10]);
+        printk!("x11: {:x}\n", (*regs).gprs[11]);
+        printk!("x12: {:x}\n", (*regs).gprs[12]);
+        printk!("x13: {:x}\n", (*regs).gprs[13]);
+        printk!("x14: {:x}\n", (*regs).gprs[14]);
+        printk!("x15: {:x}\n", (*regs).gprs[15]);
+        printk!("x16: {:x}\n", (*regs).gprs[16]);
+        printk!("x17: {:x}\n", (*regs).gprs[17]);
+        printk!("x18: {:x}\n", (*regs).gprs[18]);
+        printk!("x19: {:x}\n", (*regs).gprs[19]);
+        printk!("x20: {:x}\n", (*regs).gprs[20]);
+        printk!("x21: {:x}\n", (*regs).gprs[21]);
+        printk!("x22: {:x}\n", (*regs).gprs[22]);
+        printk!("x23: {:x}\n", (*regs).gprs[23]);
+        printk!("x24: {:x}\n", (*regs).gprs[24]);
+        printk!("x25: {:x}\n", (*regs).gprs[25]);
+        printk!("x26: {:x}\n", (*regs).gprs[26]);
+        printk!("x27: {:x}\n", (*regs).gprs[27]);
+        printk!("x28: {:x}\n", (*regs).gprs[28]);
+        printk!("x29: {:x}\n", (*regs).gprs[29]);
+        printk!("x30: {:x}\n", (*regs).gprs[30]);
+        printk!("sp: {:x}\n", (*regs).gprs[31]);
+        printk!("sp: {:x}\n", (*regs).gprs[31]);
+    }
+
     loop {
         unsafe {
             asm!("wfi");

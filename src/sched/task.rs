@@ -150,8 +150,6 @@ impl Sched {
         let task = unsafe { self.run_queue.lock().remove_at(&task) };
 
         self.blocked_queue.lock().push_back(task);
-
-        sched_yield();
     }
 
     pub fn unblock_task(&self, task: &Arc<Task>) {

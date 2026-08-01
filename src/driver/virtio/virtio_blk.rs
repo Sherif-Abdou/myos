@@ -1,17 +1,10 @@
 use core::{any::Any, mem::MaybeUninit, ptr::read_volatile, sync::atomic::fence};
 
 use crate::{
-    GIC,
-    driver::{
+    GIC, driver::{
         Driver,
         virtio::{Virtq, VirtqDescriptor},
-    },
-    dtb::FdtNode,
-    impl_link,
-    interrupts::IRQ_TABLE,
-    sched::{Mutex, WaitQueue},
-    subsystem::{BlockDriver, set_disk},
-    utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
+    }, dtb::FdtNode, impl_link, interrupts::IRQ_TABLE, printk, sched::{Mutex, WaitQueue}, subsystem::{BlockDriver, set_disk}, utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
 };
 
 const DESCRIPTOR_BLOCK_SIZE: usize = 600;

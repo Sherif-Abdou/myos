@@ -1,9 +1,9 @@
 mod mutex;
 mod task;
-mod wait_queue;
+mod waitqueue;
 mod workqueue;
 
 pub use mutex::*;
 pub use task::*;
-pub use wait_queue::*;
+pub use waitqueue::*;
 pub use workqueue::*;

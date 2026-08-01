@@ -1,4 +1,4 @@
-use core::{ffi::CStr, ptr::NonNull};
+use core::{ffi::CStr, ptr::NonNull, sync::atomic::{AtomicBool, Ordering::SeqCst}};
 
 use alloc::collections::LinkedList;
 
@@ -152,11 +152,20 @@ pub struct FdtNode {
     name: Option<&'static str>,
     properties: LinkedList<FdtProp, &'static CoreLock<BumpAllocator>>,
     children: LinkedList<FdtNode, &'static CoreLock<BumpAllocator>>,
+    probed: AtomicBool,
 }
 
 impl FdtNode {
     pub fn name(&self) -> &'static str {
         self.name.unwrap_or("")
+    }
+
+    pub fn is_probed(&self) -> bool {
+        self.probed.load(SeqCst)
+    }
+
+    pub fn set_probed(&self, value: bool) {
+        self.probed.store(value, SeqCst);
     }
 
     pub fn parse(cursor: &mut NonNull<u32>, strings: NonNull<u8>) -> Self {
@@ -192,10 +201,10 @@ impl FdtNode {
         }
         *cursor = unsafe { cursor.offset(1) };
 
-        Self {
-            name,
+        Self { name,
             properties,
             children,
+            probed: AtomicBool::new(false),
         }
     }
 

@@ -38,7 +38,7 @@ macro_rules! check_driver {
     ($devices:expr,$node:expr,$compatible:expr,$driver:tt) => {
         if $compatible == $driver::compatible_string() {
             let Ok(driver) = $driver::new($node) else {
-                continue;
+                return;
             };
             let driver: UniqueArc<$driver> = UniqueArc::new(driver);
             let driver: ListArc<$driver, 0> = driver.into();
@@ -51,7 +51,8 @@ macro_rules! check_driver {
             });
 
             $devices.lock().push_back(device.into());
-            // continue;
+            $node.set_probed(true);
+            return;
         }
     };
 }
@@ -63,14 +64,37 @@ impl DeviceBus {
         }
     }
 
-    pub fn walk_fdt_root(&self, root: &FdtNode) {
-        for node in root.children() {
-            let Some(compatible) = node.read_prop_string("compatible") else {
-                continue;
-            };
+    fn early_fdt_walk(&self, root: &FdtNode) {
+        let chosen = root.find_child_by_name("chosen").unwrap();
 
-            check_driver!(self.devices, node, compatible, Pl);
-            check_driver!(self.devices, node, compatible, VirtioBlkDriver);
+        let node_name = chosen
+            .read_prop_string("stdout-path")
+            .unwrap()
+            .trim_start_matches('/');
+
+        if let Some(node) = root.find_child_by_name(node_name) {
+            self.try_probe_node(node);
+        }
+    }
+
+    fn try_probe_node(&self, node: &FdtNode) {
+        if node.is_probed() {
+            return;
+        }
+
+        let Some(compatible) = node.read_prop_string("compatible") else {
+            return;
+        };
+
+        check_driver!(self.devices, node, compatible, Pl);
+        check_driver!(self.devices, node, compatible, VirtioBlkDriver);
+    }
+
+    pub fn walk_fdt_root(&self, root: &FdtNode) {
+        self.early_fdt_walk(root);
+
+        for node in root.children() {
+            self.try_probe_node(node);
         }
     }
 }
