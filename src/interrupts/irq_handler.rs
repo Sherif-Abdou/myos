@@ -5,7 +5,9 @@ use core::{
 };
 
 use crate::{
-    Gic, early_printk, printk, read_sysreg, sched::SCHEDULER, utils::{Arc, PerCpuLock, SpinLock},
+    Gic, early_printk, printk, read_sysreg,
+    sched::SCHEDULER,
+    utils::{Arc, PerCpuLock, SpinLock},
 };
 
 pub static RETURN_TABLE: PerCpuLock<Option<*const ExceptionRegisters>> = PerCpuLock::nones();
@@ -56,9 +58,13 @@ pub struct ExceptionRegisters {
 extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     early_printk!("EXCEPTION: \n");
     let far: u64;
-    unsafe { read_sysreg!(far, FAR_EL1); }
+    unsafe {
+        read_sysreg!(far, FAR_EL1);
+    }
     let elr: u64;
-    unsafe { read_sysreg!(elr, ELR_EL1); }
+    unsafe {
+        read_sysreg!(elr, ELR_EL1);
+    }
 
     printk!("EXCEPTION at 0x{:x}, FAR 0x{:x} \n", elr, far);
     unsafe {

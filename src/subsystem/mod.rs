@@ -1,4 +1,5 @@
 mod block;
+mod page;
 
 pub use block::{BlockDriver, block_cache, set_disk};
 

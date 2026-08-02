@@ -1,4 +1,8 @@
-use core::{ffi::CStr, ptr::NonNull, sync::atomic::{AtomicBool, Ordering::SeqCst}};
+use core::{
+    ffi::CStr,
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, Ordering::SeqCst},
+};
 
 use alloc::collections::LinkedList;
 
@@ -201,7 +205,8 @@ impl FdtNode {
         }
         *cursor = unsafe { cursor.offset(1) };
 
-        Self { name,
+        Self {
+            name,
             properties,
             children,
             probed: AtomicBool::new(false),
