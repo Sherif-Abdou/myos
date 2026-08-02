@@ -100,13 +100,6 @@ pub const ATTR_INDX_MASK: u64 = 0x7 << ATTR_INDX_OFFSET;
 
 const ADDR_MASK: u64 = 0x0000ffffffff0000;
 
-#[repr(u64)]
-enum Shareability {
-    None = 0,
-    Outer = 0b10,
-    Inner = 0b11,
-}
-
 #[repr(transparent)]
 struct ArmPageDescriptor(u64);
 
@@ -115,7 +108,14 @@ impl ArmPageDescriptor {
         Self(0x1)
     }
 
-    pub const fn is_page(&self) -> bool {}
+    pub const fn is_page_descriptor(&self) -> bool {
+        (self.0 & 0b10) != 0
+    }
+
+    pub const fn set_page_descriptor(&mut self, descriptor_type: bool) {
+        self.0 &= !((descriptor_type as u64) << 1);
+        self.0 |= (descriptor_type as u64) << 1;
+    }
 
     pub const fn af(&self) -> bool {
         (self.0 & AF_MASK) != 0
@@ -133,5 +133,18 @@ impl ArmPageDescriptor {
 
     pub const fn get_phys_address(&self) -> usize {
         (self.0 & ADDR_MASK) as usize
+    }
+}
+
+#[repr(align(4096))]
+pub struct ArmDescriptorGroup([ArmPageDescriptor; 512]);
+
+impl ArmDescriptorGroup {
+    pub const fn new() -> Self {
+        Self([const { ArmPageDescriptor::new() }; 512])
+    }
+
+    pub fn phys_addr(&self) -> u64 {
+        (self.0.as_ptr().addr() as u64) & 0x7fffffffff
     }
 }
