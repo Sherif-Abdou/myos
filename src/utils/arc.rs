@@ -30,12 +30,12 @@ impl<T: ?Sized> ArcInner<T> {
     }
 }
 
-impl<const N: usize> Arc<[u8; N]> {
+impl<T> Arc<T> {
     pub fn zeroed() -> Self {
         let memory = KERNEL_ALLOCATOR
-            .allocate(Layout::new::<ArcInner<[u8; N]>>())
+            .allocate_zeroed(Layout::new::<ArcInner<T>>())
             .unwrap();
-        let mut inner: NonNull<ArcInner<[u8; N]>> = memory.cast();
+        let mut inner: NonNull<ArcInner<T>> = memory.cast();
 
         unsafe { inner.as_mut().count = AtomicUsize::new(1) };
 
@@ -137,7 +137,7 @@ impl<T> UniqueArc<T> {
     }
 }
 
-impl<const N: usize> UniqueArc<[u8; N]> {
+impl<T> UniqueArc<T> {
     pub fn zeroed() -> Self {
         Self {
             inner: Arc::zeroed(),

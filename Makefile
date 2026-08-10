@@ -31,8 +31,9 @@ BASE_COMMAND:=qemu-system-aarch64 \
 		-kernel $(OS_PATH) \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \
-		-device virtio-serial-device \
-		-drive if=virtio-mmio,file=disk.qcow2,format=qcow2 \
+		-chardev stdio,id=ch0,mux=on \
+		-drive if=none,file=disk.qcow2,format=qcow2,id=hd0 \
+		-device virtio-blk-device,drive=hd0 \
 		-serial chardev:ch0
 endif
 

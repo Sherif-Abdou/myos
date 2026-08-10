@@ -9,7 +9,6 @@ use crate::{
     dtb::FdtNode,
     impl_link,
     interrupts::IRQ_TABLE,
-    printk,
     sched::{Mutex, WaitQueue},
     subsystem::{BlockDriver, set_disk},
     utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},

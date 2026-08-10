@@ -32,7 +32,7 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::block_cache,
+    subsystem::{TmpFs, block_cache},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -152,6 +152,15 @@ pub fn threaded_init(_arg: *mut ()) {
     block_cache().write(12 * 512, &[1u8; 16]);
     printk!("Read data: {:?}\n", data);
 
+    let fs = TmpFs::new();
+    let file = fs.create_file("hello");
+    file.write(0, &[1, 2, 3, 4]);
+
+    let mut buf = [0u8; 4];
+    let read = file.read(255, &mut buf);
+    assert_eq!(read, 0);
+
+    printk!("Done\n");
     loop {
         unsafe {
             asm!("wfi");

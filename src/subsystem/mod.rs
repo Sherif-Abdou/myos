@@ -1,7 +1,10 @@
 mod block;
+mod fs;
 mod page;
 
 pub use block::{BlockDriver, block_cache, set_disk};
+
+pub use fs::*;
 
 use core::fmt::Write;
 
