@@ -57,8 +57,6 @@ static GIC: OnceSpinLock<KBox<Gic>> = OnceSpinLock::new();
 
 static FDT: OnceSpinLock<Fdt> = OnceSpinLock::new();
 
-fn timer() {}
-
 #[unsafe(no_mangle)]
 extern "C" fn entry() {
     configure_exceptions();
@@ -153,12 +151,8 @@ pub fn threaded_init(_arg: *mut ()) {
     printk!("Read data: {:?}\n", data);
 
     let fs = TmpFs::new();
-    let file = fs.create_file("hello");
-    file.write(0, &[1, 2, 3, 4]);
-
-    let mut buf = [0u8; 4];
-    let read = file.read(255, &mut buf);
-    assert_eq!(read, 0);
+    fs.create_file("hello.txt");
+    fs.create_file("hello2.txt");
 
     printk!("Done\n");
     loop {

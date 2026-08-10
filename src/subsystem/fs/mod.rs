@@ -20,12 +20,17 @@ pub trait InodeFileExt {
 }
 
 pub trait InodeDirectoryExt {
-    fn children(&self) -> MutexGuard<'_, List<Inode>>;
+    fn list_directory(&self) -> MutexGuard<'_, List<Inode>>;
+
+    fn create_file(&self, name: &str);
+    fn remove_file(&self, name: &str);
+    fn create_directory(&self, name: &str);
+    fn remove_directory(&self, name: &str);
 }
 
 pub enum InodeContents {
-    Children(Arc<dyn InodeDirectoryExt>),
-    Content(Arc<dyn InodeFileExt>),
+    Directory(Arc<dyn InodeDirectoryExt>),
+    File(Arc<dyn InodeFileExt>),
 }
 
 pub struct InodeMeta {
@@ -84,7 +89,7 @@ impl Inode {
 impl Inode {
     pub fn read(&self, offset: u64, buffer: &mut [u8]) -> usize {
         let contents = self.contents.lock();
-        let InodeContents::Content(ref contents) = *contents else {
+        let InodeContents::File(ref contents) = *contents else {
             return 0;
         };
 
@@ -93,11 +98,53 @@ impl Inode {
 
     pub fn write(&self, offset: u64, buffer: &[u8]) {
         let contents = self.contents.lock();
-        let InodeContents::Content(ref contents) = *contents else {
+        let InodeContents::File(ref contents) = *contents else {
             return;
         };
 
         contents.write(offset, buffer);
+    }
+
+    pub fn create_file(&self, name: &str) {
+        let contents = self.contents.lock();
+        let InodeContents::Directory(ref contents) = *contents else {
+            return;
+        };
+
+        contents.create_file(name);
+    }
+    pub fn remove_file(&self, name: &str) {
+        let contents = self.contents.lock();
+        let InodeContents::Directory(ref contents) = *contents else {
+            return;
+        };
+
+        contents.remove_file(name);
+    }
+    pub fn create_directory(&self, name: &str) {
+        let contents = self.contents.lock();
+        let InodeContents::Directory(ref contents) = *contents else {
+            return;
+        };
+
+        contents.create_directory(name);
+    }
+    pub fn remove_directory(&self, name: &str) {
+        let contents = self.contents.lock();
+        let InodeContents::Directory(ref contents) = *contents else {
+            return;
+        };
+
+        contents.remove_directory(name);
+    }
+
+    pub fn list_directory<R, F: FnOnce(MutexGuard<'_, List<Inode>>) -> R>(&self, func: F) -> R {
+        let contents = self.contents.lock();
+        let InodeContents::Directory(ref contents) = *contents else {
+            panic!("list_directory can only be called on a directory.");
+        };
+
+        func(contents.list_directory())
     }
 }
 

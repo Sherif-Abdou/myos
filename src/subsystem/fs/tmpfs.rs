@@ -108,8 +108,49 @@ pub struct InodeDirectory {
 }
 
 impl InodeDirectoryExt for InodeDirectory {
-    fn children(&self) -> MutexGuard<'_, List<Inode>> {
+    fn list_directory(&self) -> MutexGuard<'_, List<Inode>> {
         self.children.lock()
+    }
+
+    fn create_file(&self, name: &str) {
+        let file = InodeFile {
+            blocks: List::new(),
+        };
+        let node: ListArc<Inode, 0> =
+            UniqueArc::new(Inode::new(InodeContents::File(Arc::new(Mutex::new(file))))).into();
+
+        node.meta().set_name(name);
+
+        self.children.lock().push_back(node);
+    }
+
+    fn create_directory(&self, name: &str) {
+        let directory = InodeDirectory {
+            children: Mutex::new(List::new()),
+        };
+        let node: ListArc<Inode, 0> =
+            UniqueArc::new(Inode::new(InodeContents::Directory(Arc::new(directory)))).into();
+
+        node.meta().set_name(name);
+
+        self.children.lock().push_back(node);
+    }
+
+    fn remove_file(&self, name: &str) {
+        let mut children = self.children.lock();
+        let mut cursor = children.cursor_mut();
+
+        while let Some(file) = cursor.get_arc() {
+            if file.meta.lock().name() == name {
+                cursor.remove();
+            } else {
+                let _ = cursor.next();
+            }
+        }
+    }
+
+    fn remove_directory(&self, name: &str) {
+        self.remove_file(name);
     }
 }
 
@@ -122,31 +163,29 @@ impl TmpFs {
         let root = Arc::new(InodeDirectory {
             children: Mutex::new(List::new()),
         });
-        let root = Inode::new(InodeContents::Children(root));
+        let root = Inode::new(InodeContents::Directory(root));
         root.meta().set_name("");
 
         Self { root }
     }
 
-    pub fn create_file(&self, name: &str) -> Arc<Inode> {
-        let InodeContents::Children(ref directory) = *self.root.contents() else {
-            panic!("Why is root not a directory?");
-        };
-        let mut children = directory.children();
-        let file = InodeFile {
-            blocks: List::new(),
-        };
-        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(InodeContents::Content(Arc::new(
-            Mutex::new(file),
-        ))))
-        .into();
+    pub fn create_file(&self, name: &str) {
+        self.root.create_file(name);
+    }
 
-        let ret = node.clone_arc();
+    pub fn remove_file(&self, name: &str) {
+        self.root.remove_file(name);
+    }
 
-        node.meta().set_name(name);
+    pub fn create_directory(&self, name: &str) {
+        self.root.create_directory(name);
+    }
 
-        children.push_back(node);
+    pub fn remove_directory(&self, name: &str) {
+        self.root.remove_directory(name);
+    }
 
-        ret
+    pub fn list_directory<R, F: FnOnce(MutexGuard<'_, List<Inode>>) -> R>(&self, func: F) -> R {
+        self.root.list_directory(func)
     }
 }
