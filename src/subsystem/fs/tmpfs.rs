@@ -144,7 +144,7 @@ impl InodeDirectoryExt for InodeDirectory {
         let mut cursor = children.cursor_mut();
 
         while let Some(file) = cursor.get_arc() {
-            if file.meta.lock().name() == name {
+            if file.meta().name() == name {
                 cursor.remove();
             } else {
                 let _ = cursor.next();
