@@ -1,14 +1,14 @@
-use core::{any::Any, mem::transmute};
+use core::mem::transmute;
 
 use crate::{
     impl_link,
     sched::{SCHEDULER, WaitQueue},
-    utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
+    utils::{Arc, ArcAny, List, ListLinks, SpinLock, UniqueArc},
 };
 
 struct WorkqueuEntry {
-    function: fn(Option<Arc<dyn Any + Send + Sync + 'static>>),
-    arg: Option<Arc<dyn Any + Send + Sync + 'static>>,
+    function: fn(Option<ArcAny>),
+    arg: Option<ArcAny>,
     links: ListLinks,
 }
 
@@ -54,11 +54,7 @@ impl Workqueue {
         queue
     }
 
-    pub fn enqueue_work(
-        &self,
-        function: fn(Option<Arc<dyn Any + Send + Sync + 'static>>),
-        arg: Option<Arc<dyn Any + Send + Sync + 'static>>,
-    ) {
+    pub fn enqueue_work(&self, function: fn(Option<ArcAny>), arg: Option<ArcAny>) {
         self.queue.lock().push_back(
             UniqueArc::new(WorkqueuEntry {
                 function,

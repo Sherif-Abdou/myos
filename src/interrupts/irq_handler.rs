@@ -1,5 +1,4 @@
 use core::{
-    any::Any,
     arch::asm,
     sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
@@ -7,7 +6,7 @@ use core::{
 use crate::{
     Gic, early_printk, printk, read_sysreg,
     sched::SCHEDULER,
-    utils::{Arc, PerCpuLock, SpinLock},
+    utils::{ArcAny, PerCpuLock, SpinLock},
 };
 
 pub static RETURN_TABLE: PerCpuLock<Option<*const ExceptionRegisters>> = PerCpuLock::nones();
@@ -23,12 +22,12 @@ pub fn can_block() -> bool {
 }
 
 pub struct IrqContext<'a> {
-    data: Option<&'a Arc<dyn Any + Sync + Send>>,
+    data: Option<&'a ArcAny>,
 }
 
 struct IrqHandler {
-    callback: fn(Option<&Arc<dyn Any + Sync + Send>>),
-    data: Option<Arc<dyn Any + Sync + Send>>,
+    callback: fn(Option<&ArcAny>),
+    data: Option<ArcAny>,
 }
 
 pub struct IrqTable {
@@ -39,8 +38,8 @@ impl IrqTable {
     pub fn register_interrupt(
         &mut self,
         irqn: u64,
-        callback: fn(Option<&Arc<dyn Any + Send + Sync>>),
-        data: Option<Arc<dyn Any + Send + Sync>>,
+        callback: fn(Option<&ArcAny>),
+        data: Option<ArcAny>,
     ) {
         self.irqs[irqn as usize] = Some(IrqHandler { callback, data });
     }

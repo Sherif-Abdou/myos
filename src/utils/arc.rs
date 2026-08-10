@@ -1,5 +1,6 @@
 use core::{
     alloc::Layout,
+    any::Any,
     marker::Unsize,
     mem::{ManuallyDrop, offset_of},
     ops::{CoerceUnsized, Deref, DerefMut},
@@ -123,6 +124,22 @@ impl<T: ?Sized> Drop for Arc<T> {
             unsafe { KERNEL_ALLOCATOR.deallocate(self.inner.cast(), layout) };
         }
     }
+}
+
+pub type ArcAny = Arc<dyn Any + Send + Sync>;
+
+impl Arc<dyn Any + Send + Sync> {
+    pub fn expect_downcast_ref<T: 'static>(&self) -> &T {
+        self.downcast_ref()
+            .expect("Could not downcast to expected type")
+    }
+}
+
+pub fn expect_downcast_ref<T: 'static>(value: Option<&ArcAny>) -> &T {
+    value
+        .as_ref()
+        .map(|value| value.expect_downcast_ref())
+        .expect("Expected value to be nonull")
 }
 
 pub struct UniqueArc<T: ?Sized> {

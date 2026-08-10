@@ -1,5 +1,3 @@
-use core::any::Any;
-
 use crate::{
     GIC,
     arm_pl::disable_earlyconsole,
@@ -8,7 +6,7 @@ use crate::{
     interrupts::{IRQ_TABLE, can_block},
     sched::WaitQueue,
     subsystem::{ConsoleDriver, set_console},
-    utils::{Arc, Mmio},
+    utils::{Arc, ArcAny, Mmio, expect_downcast_ref},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;
@@ -27,10 +25,8 @@ const UARTMIS: usize = 0x40;
 const UARTICR: usize = 0x44;
 const UARTDMACR: usize = 0x44;
 
-fn irq_handler(driver: Option<&Arc<dyn Any + Send + Sync + 'static>>) {
-    let driver: &Pl = driver
-        .map(|driver| driver.downcast_ref::<Pl>().unwrap())
-        .expect("Driver must be passed in");
+fn irq_handler(driver: Option<&ArcAny>) {
+    let driver: &Pl = expect_downcast_ref(driver);
 
     let status = unsafe { driver.regs.read_u16(UARTMIS) };
     if status & (1 << 5) != 0 {

@@ -1,4 +1,4 @@
-use core::{any::Any, mem::MaybeUninit, ptr::read_volatile, sync::atomic::fence};
+use core::{mem::MaybeUninit, ptr::read_volatile, sync::atomic::fence};
 
 use crate::{
     GIC,
@@ -11,7 +11,7 @@ use crate::{
     interrupts::IRQ_TABLE,
     sched::{Mutex, WaitQueue},
     subsystem::{BlockDriver, set_disk},
-    utils::{Arc, ListLinks, Mmio, SpinLock, UniqueArc},
+    utils::{Arc, ArcAny, ListLinks, Mmio, SpinLock, UniqueArc, expect_downcast_ref},
 };
 
 const DESCRIPTOR_BLOCK_SIZE: usize = 600;
@@ -20,10 +20,8 @@ const NUM_DESCRIPTORS: usize = 48;
 
 const DESCRIPTOR_COUNT: usize = 16;
 
-fn irq_handler(driver: Option<&Arc<dyn Any + Send + Sync + 'static>>) {
-    let driver: &VirtioBlkDriver = driver
-        .map(|driver| driver.downcast_ref::<VirtioBlkDriver>().unwrap())
-        .expect("Driver must be passed in");
+fn irq_handler(driver: Option<&ArcAny>) {
+    let driver: &VirtioBlkDriver = expect_downcast_ref(driver);
 
     let status = unsafe { driver.mmio.read_u32(0x60) };
 

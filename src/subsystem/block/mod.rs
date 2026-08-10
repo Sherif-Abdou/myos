@@ -1,12 +1,9 @@
-use core::{
-    any::Any,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
-};
+use core::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use crate::{
     impl_link,
     sched::{Mutex, MutexGuard, WaitQueue, Workqueue},
-    utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
+    utils::{Arc, ArcAny, List, ListLinks, OnceSpinLock, UniqueArc, expect_downcast_ref},
 };
 
 pub trait BlockDriver {
@@ -115,11 +112,8 @@ impl BlockCache {
         }
     }
 
-    fn fetch_wq_work(arg: Option<Arc<dyn Any + Send + Sync + 'static>>) {
-        let entry = arg
-            .as_ref()
-            .map(|arg| arg.downcast_ref::<BlockSectorEntry>().unwrap())
-            .expect("Expected block entry to be passed in");
+    fn fetch_wq_work(arg: Option<ArcAny>) {
+        let entry: &BlockSectorEntry = expect_downcast_ref(arg.as_ref());
 
         let mut inner = entry.inner.lock();
         inner.fetch_in_progress = true;
@@ -131,11 +125,8 @@ impl BlockCache {
         entry.wait_queue.unblock_all();
     }
 
-    fn flush_wq_work(arg: Option<Arc<dyn Any + Send + Sync + 'static>>) {
-        let entry = arg
-            .as_ref()
-            .map(|arg| arg.downcast_ref::<BlockSectorEntry>().unwrap())
-            .expect("Expected block entry to be passed in");
+    fn flush_wq_work(arg: Option<ArcAny>) {
+        let entry: &BlockSectorEntry = expect_downcast_ref(arg.as_ref());
 
         let mut inner = entry.lock_inner();
         let sector = inner.sector;
@@ -285,7 +276,7 @@ impl BlockCache {
         }
     }
 
-    fn reclaim(&self, _arg: Option<Arc<dyn Any + Send + Sync + 'static>>) {
+    fn reclaim(&self, _arg: Option<ArcAny>) {
         let mut sectors = self.sectors.lock();
         let mut count = self.cache_count.load(SeqCst);
         let mut cursor = sectors.cursor_mut();

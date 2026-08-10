@@ -25,7 +25,16 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, init_scheduler}, subsystem::{FileSystem, TmpFs, block_cache}, timer::ArmTimer, utils::OnceSpinLock,
+    allocators::{KBox, kbox},
+    arm_pl::init_from_dtb_node,
+    driver::DeviceBus,
+    dtb::{Fdt, find_earlyconsole_node},
+    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
+    memory::init_allocator,
+    sched::{SCHEDULER, init_scheduler},
+    subsystem::{FileSystem, TmpFs, block_cache},
+    timer::ArmTimer,
+    utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -142,8 +151,7 @@ pub fn threaded_init(_arg: *mut ()) {
     printk!("Read data: {:?}\n", data);
 
     let fs = TmpFs::new();
-    fs.create_file("hello.txt");
-    fs.create_file("hello2.txt");
+    let _file = fs.create("/hello.txt").unwrap();
 
     printk!("Done\n");
     loop {

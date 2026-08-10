@@ -1,5 +1,11 @@
 use crate::{
-    impl_link, sched::{Mutex, MutexGuard}, subsystem::{FileSystem, fs::{Inode, InodeContents, InodeDirectoryExt, InodeFileExt}}, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    impl_link,
+    sched::{Mutex, MutexGuard},
+    subsystem::{
+        FileSystem,
+        fs::{Inode, InodeContents, InodeDirectoryExt, InodeFileExt},
+    },
+    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 const TMPFS_BLOCK_SIZE: usize = 4096;
