@@ -1,8 +1,5 @@
 use crate::{
-    impl_link,
-    sched::{Mutex, MutexGuard},
-    subsystem::fs::{Inode, InodeContents, InodeDirectoryExt, InodeFileExt},
-    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    impl_link, sched::{Mutex, MutexGuard}, subsystem::{FileSystem, fs::{Inode, InodeContents, InodeDirectoryExt, InodeFileExt}}, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 const TMPFS_BLOCK_SIZE: usize = 4096;
@@ -155,7 +152,7 @@ impl InodeDirectoryExt for InodeDirectory {
 }
 
 pub struct TmpFs {
-    root: Inode,
+    root: Arc<Inode>,
 }
 
 impl TmpFs {
@@ -166,26 +163,14 @@ impl TmpFs {
         let root = Inode::new(InodeContents::Directory(root));
         root.meta().set_name("");
 
-        Self { root }
+        Self {
+            root: Arc::new(root),
+        }
     }
+}
 
-    pub fn create_file(&self, name: &str) {
-        self.root.create_file(name);
-    }
-
-    pub fn remove_file(&self, name: &str) {
-        self.root.remove_file(name);
-    }
-
-    pub fn create_directory(&self, name: &str) {
-        self.root.create_directory(name);
-    }
-
-    pub fn remove_directory(&self, name: &str) {
-        self.root.remove_directory(name);
-    }
-
-    pub fn list_directory<R, F: FnOnce(MutexGuard<'_, List<Inode>>) -> R>(&self, func: F) -> R {
-        self.root.list_directory(func)
+impl FileSystem for TmpFs {
+    fn root(&self) -> Arc<Inode> {
+        self.root.clone()
     }
 }
