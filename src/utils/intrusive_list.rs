@@ -1,6 +1,7 @@
 use core::{
     cell::Cell,
     marker::{PhantomData, PhantomPinned},
+    ops::{Deref, DerefMut},
     pin::Pin,
     ptr::NonNull,
     sync::atomic::AtomicBool,
@@ -501,6 +502,63 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursorMut<'a, T, N> {
             let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
 
             ListArc::from_arc_inner(NonNull::new_unchecked(arc_inner))
+        }
+    }
+}
+
+/// Helper struct that wraps a type in a ListLink
+pub struct ListNode<T, const N: usize = 0> {
+    inner: T,
+    links: ListLinks,
+}
+
+impl<T, const N: usize> ListNode<T, N> {
+    pub const fn new(inner: T) -> Self {
+        Self {
+            inner,
+            links: ListLinks::new(),
+        }
+    }
+}
+
+impl<T, const N: usize> DerefMut for ListNode<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T, const N: usize> Deref for ListNode<T, N> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T, const N: usize> crate::utils::LinkedNode<ListNode<T, N>, N> for ListNode<T, N> {
+    fn arc_from_link(
+        link: *mut crate::utils::ListLinks,
+    ) -> *mut crate::utils::ArcInner<ListNode<T, N>> {
+        let value_ptr = unsafe {
+            (&raw mut *link)
+                .byte_sub(::core::mem::offset_of!(ListNode<T, N>,links))
+                .cast::<ListNode<T, N>>()
+        };
+        unsafe {
+            value_ptr
+                .byte_sub(crate::utils::arc_inner_offset::<ListNode<T, N>>())
+                .cast::<crate::utils::ArcInner<ListNode<T, N>>>()
+        }
+    }
+    fn link_from_arc(
+        arc: *mut crate::utils::ArcInner<ListNode<T, N>>,
+    ) -> *mut crate::utils::ListLinks {
+        let inner_ptr =
+            unsafe { (&raw mut *arc).byte_add(crate::utils::arc_inner_offset::<ListNode<T, N>>()) };
+        unsafe {
+            inner_ptr
+                .byte_add(::core::mem::offset_of!(ListNode<T, N>,links))
+                .cast::<crate::utils::ListLinks>()
         }
     }
 }
