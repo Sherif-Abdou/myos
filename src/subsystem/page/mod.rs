@@ -8,7 +8,11 @@ use core::{
 use alloc::alloc::Allocator;
 
 use crate::{
-    allocators::KERNEL_ALLOCATOR, dtb::FdtNode, impl_link, sched::Mutex, utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
+    allocators::KERNEL_ALLOCATOR,
+    dtb::FdtNode,
+    impl_link,
+    sched::Mutex,
+    utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
 };
 
 /// Bit 63 — AMEC (encrypted-memory context select, FEAT_MEC).

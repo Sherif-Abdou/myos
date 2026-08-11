@@ -94,7 +94,7 @@ extern "C" fn entry() {
     IRQ_TABLE.lock().register_interrupt(
         27,
         |_| {
-            ArmTimer::wait(1_000);
+            ArmTimer::wait(10_000);
 
             if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
                 *RETURN_TABLE.lock() = Some(new_ret);
@@ -139,7 +139,7 @@ pub fn threaded_init(_arg: *mut ()) {
     let mut buf = [0u8; 4];
     file.read(0, &mut buf);
 
-    printk!("Done\n");
+    printk!("Kernel initialized\n");
     loop {
         unsafe {
             asm!("wfi");
