@@ -64,8 +64,17 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
     unsafe {
         read_sysreg!(elr, ELR_EL1);
     }
+    let esr: u64;
+    unsafe {
+        read_sysreg!(esr, ESR_EL1);
+    }
 
-    printk!("EXCEPTION at 0x{:x}, FAR 0x{:x} \n", elr, far);
+    printk!(
+        "EXCEPTION at 0x{:x}, FAR 0x{:x}, ESR 0x{:x} \n",
+        elr,
+        far,
+        esr
+    );
     unsafe {
         printk!("x0: {:x}\n", (*regs).gprs[0]);
         printk!("x1: {:x}\n", (*regs).gprs[1]);

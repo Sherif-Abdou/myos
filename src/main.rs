@@ -32,7 +32,7 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{FileSystem, TmpFs, block_cache},
+    subsystem::{ArmPageTableRoot, FileSystem, TmpFs},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -145,13 +145,23 @@ pub fn threaded_init(_arg: *mut ()) {
 
     printk!("Walked DTS\n");
 
-    let mut data = [0u8; 16];
-    block_cache().read(12 * 512, &mut data);
-    block_cache().write(12 * 512, &[1u8; 16]);
-    printk!("Read data: {:?}\n", data);
+    let pages = ArmPageTableRoot::create_kernel_root();
+
+    pages.bind_kernel();
 
     let fs = TmpFs::new();
-    let _file = fs.create("/hello.txt").unwrap();
+    let file = fs.create("/hello.txt").unwrap();
+    file.write(0, &[1, 2, 3, 4]);
+    let mut buf = [0u8; 4];
+    file.read(0, &mut buf);
+
+    let test_address = 0xffffff8000000000usize + 5 * (1 << 30);
+
+    let (group, index) = pages.descriptor_for_vma(test_address);
+    assert!(group.is_lowest_layer());
+    group.map_page(index, 0x40000000);
+
+    assert_eq!(buf, [1, 2, 3, 4]);
 
     printk!("Done\n");
     loop {

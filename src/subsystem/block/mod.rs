@@ -29,7 +29,7 @@ pub fn block_cache() -> &'static BlockCache {
 
 const BLOCK_SIZE: usize = 512;
 
-pub struct BlockSectorEntryInner {
+struct BlockSectorEntryInner {
     sector: u64,
     buffer: [u8; BLOCK_SIZE],
     fetch_in_progress: bool,
@@ -75,7 +75,7 @@ impl BlockSectorEntryInner {
     }
 }
 
-pub struct BlockSectorEntry {
+struct BlockSectorEntry {
     inner: Mutex<BlockSectorEntryInner>,
     wait_queue: WaitQueue,
     link: ListLinks,
@@ -84,7 +84,7 @@ pub struct BlockSectorEntry {
 impl_link!(BlockSectorEntry, 0 => link);
 
 impl BlockSectorEntry {
-    pub const fn new(sector: u64) -> Self {
+    const fn new(sector: u64) -> Self {
         Self {
             inner: Mutex::new(BlockSectorEntryInner::new(sector)),
             wait_queue: WaitQueue::new(),
@@ -92,7 +92,7 @@ impl BlockSectorEntry {
         }
     }
 
-    pub fn lock_inner(&self) -> MutexGuard<'_, BlockSectorEntryInner> {
+    fn lock_inner(&self) -> MutexGuard<'_, BlockSectorEntryInner> {
         self.inner.lock()
     }
 }

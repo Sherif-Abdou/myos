@@ -2,9 +2,11 @@ mod block;
 mod fs;
 mod page;
 
-pub use block::{BlockDriver, block_cache, set_disk};
+pub use block::*;
 
 pub use fs::*;
+
+pub use page::ArmPageTableRoot;
 
 use core::fmt::Write;
 

@@ -157,6 +157,7 @@ impl InodeDirectoryExt for InodeDirectory {
     }
 }
 
+/// In-memory file system.
 pub struct TmpFs {
     root: Arc<Inode>,
 }
