@@ -25,7 +25,7 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox},
+    allocators::{KBox, KERNEL_ALLOCATOR, kbox},
     arm_pl::init_from_dtb_node,
     driver::DeviceBus,
     dtb::{Fdt, find_earlyconsole_node},

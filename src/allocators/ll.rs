@@ -111,14 +111,26 @@ struct LLHeader {
     region_end: *mut u8,
 }
 
+struct LLStatistics {
+    bytes_allocated: usize,
+}
+
+impl LLStatistics {
+    pub const fn new() -> Self {
+        Self { bytes_allocated: 0 }
+    }
+}
+
 pub struct LLAllocator {
     first_hole: *mut LLHole,
+    stats: LLStatistics,
 }
 
 impl LLAllocator {
     pub const fn new() -> Self {
         Self {
             first_hole: core::ptr::null_mut(),
+            stats: LLStatistics::new(),
         }
     }
 
@@ -162,13 +174,19 @@ impl LLAllocator {
     }
 }
 
+impl SpinLock<LLAllocator> {
+    pub fn bytes_allocated(&self) -> usize {
+        self.lock().stats.bytes_allocated
+    }
+}
+
 unsafe impl Allocator for SpinLock<LLAllocator> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let necessary_alignment = align_of::<LLHole>().max(layout.align());
         let hole_alignment = align_of::<LLHole>();
-        let mut locked = self.lock();
+        let mut locked_self = self.lock();
 
-        let mut cursor = locked.cursor();
+        let mut cursor = locked_self.cursor();
         while !cursor.is_null() {
             let hole_addr = cursor.get_raw() as usize;
             let hole_size = unsafe { cursor.get().unwrap().size };
@@ -207,6 +225,11 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                     }
                 }
 
+                locked_self.stats.bytes_allocated = locked_self
+                    .stats
+                    .bytes_allocated
+                    .saturating_add(layout.size());
+
                 return Ok(NonNull::slice_from_raw_parts(
                     NonNull::new(ptr_addr as *mut u8).ok_or(AllocError)?,
                     layout.size(),
@@ -218,16 +241,16 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
             }
         }
 
-        locked.claim_more_memory(layout.size());
-        drop(locked);
+        locked_self.claim_more_memory(layout.size());
+        drop(locked_self);
         self.allocate(layout)
     }
 
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
-        let mut locked = self.lock();
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        let mut locked_self = self.lock();
 
         let ll_header = unsafe { ptr.byte_sub(size_of::<LLHeader>()) }.cast::<LLHeader>();
-        let mut cursor = locked.cursor();
+        let mut cursor = locked_self.cursor();
 
         let hole_size = unsafe {
             (ll_header.read().region_end as usize) - (ll_header.read().region_start as usize)
@@ -245,10 +268,10 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
         // Insert the hole into the linked list.
         unsafe {
             if cursor.get_raw().addr() > ll_hole_addr {
-                (*ll_hole.as_ptr()).next = locked.first_hole;
-                locked.first_hole = ll_hole.as_ptr();
+                (*ll_hole.as_ptr()).next = locked_self.first_hole;
+                locked_self.first_hole = ll_hole.as_ptr();
 
-                cursor = locked.cursor();
+                cursor = locked_self.cursor();
             } else {
                 // Find furthest hole before target address.
                 while !cursor.is_null()
@@ -286,5 +309,10 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
                 cursor.remove_next();
             }
         }
+
+        locked_self.stats.bytes_allocated = locked_self
+            .stats
+            .bytes_allocated
+            .saturating_sub(layout.size());
     }
 }
