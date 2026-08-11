@@ -32,7 +32,7 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{ArmPageTableRoot, FileSystem, TmpFs},
+    subsystem::{FileSystem, TmpFs, build_kernel_page_table},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -111,10 +111,6 @@ extern "C" fn entry() {
     SCHEDULER
         .get()
         .unwrap()
-        .task_from_fn(threaded_idle, core::ptr::null_mut());
-    SCHEDULER
-        .get()
-        .unwrap()
         .task_from_fn(threaded_init, core::ptr::null_mut());
     daifclr();
 
@@ -125,19 +121,11 @@ extern "C" fn entry() {
 
 pub static DEVICE_BUS: OnceSpinLock<DeviceBus> = OnceSpinLock::new();
 
-pub fn threaded_idle(_arg: *mut ()) {
-    daifclr();
-
-    loop {
-        unsafe {
-            asm!("wfi");
-        }
-    }
-}
-
 pub fn threaded_init(_arg: *mut ()) {
     daifclr();
     let fdt = FDT.get().unwrap();
+
+    build_kernel_page_table(fdt.root());
 
     assert!(DEVICE_BUS.set(DeviceBus::new()).is_ok());
 
@@ -145,23 +133,11 @@ pub fn threaded_init(_arg: *mut ()) {
 
     printk!("Walked DTS\n");
 
-    let pages = ArmPageTableRoot::create_kernel_root();
-
-    pages.bind_kernel();
-
     let fs = TmpFs::new();
     let file = fs.create("/hello.txt").unwrap();
     file.write(0, &[1, 2, 3, 4]);
     let mut buf = [0u8; 4];
     file.read(0, &mut buf);
-
-    let test_address = 0xffffff8000000000usize + 5 * (1 << 30);
-
-    let (group, index) = pages.descriptor_for_vma(test_address);
-    assert!(group.is_lowest_layer());
-    group.map_page(index, 0x40000000);
-
-    assert_eq!(buf, [1, 2, 3, 4]);
 
     printk!("Done\n");
     loop {

@@ -8,111 +8,108 @@ use core::{
 use alloc::alloc::Allocator;
 
 use crate::{
-    allocators::KERNEL_ALLOCATOR,
-    impl_link,
-    sched::Mutex,
-    utils::{Arc, List, ListLinks, SpinLock, UniqueArc, with_core_critical_section},
+    allocators::KERNEL_ALLOCATOR, dtb::FdtNode, impl_link, sched::Mutex, utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
 };
 
 /// Bit 63 — AMEC (encrypted-memory context select, FEAT_MEC).
-pub const AMEC_OFFSET: u64 = 63;
-pub const AMEC_MASK: u64 = 0x1 << AMEC_OFFSET;
+const AMEC_OFFSET: u64 = 63;
+const AMEC_MASK: u64 = 0x1 << AMEC_OFFSET;
 
 /// Bits 62:60 — PBHA[3:1], or POIndex[2:0] (FEAT_S1POE).
-pub const PBHA_3_1_OFFSET: u64 = 60;
-pub const PBHA_3_1_MASK: u64 = 0x7 << PBHA_3_1_OFFSET;
-pub const PO_INDEX_OFFSET: u64 = PBHA_3_1_OFFSET;
-pub const PO_INDEX_MASK: u64 = PBHA_3_1_MASK;
+const PBHA_3_1_OFFSET: u64 = 60;
+const PBHA_3_1_MASK: u64 = 0x7 << PBHA_3_1_OFFSET;
+const PO_INDEX_OFFSET: u64 = PBHA_3_1_OFFSET;
+const PO_INDEX_MASK: u64 = PBHA_3_1_MASK;
 
 /// Bit 59 — PBHA[0], or AttrIndx[3] (FEAT_AIE).
-pub const PBHA_0_OFFSET: u64 = 59;
-pub const PBHA_0_MASK: u64 = 0x1 << PBHA_0_OFFSET;
-pub const ATTR_INDX_3_OFFSET: u64 = PBHA_0_OFFSET;
-pub const ATTR_INDX_3_MASK: u64 = PBHA_0_MASK;
+const PBHA_0_OFFSET: u64 = 59;
+const PBHA_0_MASK: u64 = 0x1 << PBHA_0_OFFSET;
+const ATTR_INDX_3_OFFSET: u64 = PBHA_0_OFFSET;
+const ATTR_INDX_3_MASK: u64 = PBHA_0_MASK;
 
 /// Bits 58:55 — IGNORED, available for software use.
-pub const IGNORED_58_55_OFFSET: u64 = 55;
-pub const IGNORED_58_55_MASK: u64 = 0xF << IGNORED_58_55_OFFSET;
+const IGNORED_58_55_OFFSET: u64 = 55;
+const IGNORED_58_55_MASK: u64 = 0xF << IGNORED_58_55_OFFSET;
 
 /// Bit 55 — reserved for software use (within the ignored range above).
-pub const SW_USE_OFFSET: u64 = 55;
-pub const SW_USE_MASK: u64 = 0x1 << SW_USE_OFFSET;
+const SW_USE_OFFSET: u64 = 55;
+const SW_USE_MASK: u64 = 0x1 << SW_USE_OFFSET;
 
 /// Bit 54 — UXN, or XN, or PXN (alt layout), or PIIndex[3] (FEAT_S1PIE).
-pub const UXN_OFFSET: u64 = 54;
-pub const UXN_MASK: u64 = 0x1 << UXN_OFFSET;
-pub const XN_OFFSET: u64 = UXN_OFFSET;
-pub const XN_MASK: u64 = UXN_MASK;
-pub const PXN_ALT_OFFSET: u64 = UXN_OFFSET;
-pub const PXN_ALT_MASK: u64 = UXN_MASK;
-pub const PI_INDEX_3_OFFSET: u64 = UXN_OFFSET;
-pub const PI_INDEX_3_MASK: u64 = UXN_MASK;
+const UXN_OFFSET: u64 = 54;
+const UXN_MASK: u64 = 0x1 << UXN_OFFSET;
+const XN_OFFSET: u64 = UXN_OFFSET;
+const XN_MASK: u64 = UXN_MASK;
+const PXN_ALT_OFFSET: u64 = UXN_OFFSET;
+const PXN_ALT_MASK: u64 = UXN_MASK;
+const PI_INDEX_3_OFFSET: u64 = UXN_OFFSET;
+const PI_INDEX_3_MASK: u64 = UXN_MASK;
 
 /// Bit 53 — PXN, or PIIndex[2].
-pub const PXN_OFFSET: u64 = 53;
-pub const PXN_MASK: u64 = 0x1 << PXN_OFFSET;
-pub const PI_INDEX_2_OFFSET: u64 = PXN_OFFSET;
-pub const PI_INDEX_2_MASK: u64 = PXN_MASK;
+const PXN_OFFSET: u64 = 53;
+const PXN_MASK: u64 = 0x1 << PXN_OFFSET;
+const PI_INDEX_2_OFFSET: u64 = PXN_OFFSET;
+const PI_INDEX_2_MASK: u64 = PXN_MASK;
 
 /// Bit 52 — Contiguous hint, or Protected (alt layout).
-pub const CONTIGUOUS_OFFSET: u64 = 52;
-pub const CONTIGUOUS_MASK: u64 = 0x1 << CONTIGUOUS_OFFSET;
-pub const PROTECTED_OFFSET: u64 = CONTIGUOUS_OFFSET;
-pub const PROTECTED_MASK: u64 = CONTIGUOUS_MASK;
+const CONTIGUOUS_OFFSET: u64 = 52;
+const CONTIGUOUS_MASK: u64 = 0x1 << CONTIGUOUS_OFFSET;
+const PROTECTED_OFFSET: u64 = CONTIGUOUS_OFFSET;
+const PROTECTED_MASK: u64 = CONTIGUOUS_MASK;
 
 /// Bit 51 — DBM (Dirty Bit Modifier), or PIIndex[1].
-pub const DBM_OFFSET: u64 = 51;
-pub const DBM_MASK: u64 = 0x1 << DBM_OFFSET;
-pub const PI_INDEX_1_OFFSET: u64 = DBM_OFFSET;
-pub const PI_INDEX_1_MASK: u64 = DBM_MASK;
+const DBM_OFFSET: u64 = 51;
+const DBM_MASK: u64 = 0x1 << DBM_OFFSET;
+const PI_INDEX_1_OFFSET: u64 = DBM_OFFSET;
+const PI_INDEX_1_MASK: u64 = DBM_MASK;
 
 /// Bit 50 — GP (Guarded Page, BTI).
-pub const GP_OFFSET: u64 = 50;
-pub const GP_MASK: u64 = 0x1 << GP_OFFSET;
+const GP_OFFSET: u64 = 50;
+const GP_MASK: u64 = 0x1 << GP_OFFSET;
 
 /// Bit 16 — nT (block-entry "no translation" hint).
-pub const N_T_OFFSET: u64 = 16;
-pub const N_T_MASK: u64 = 0x1 << N_T_OFFSET;
+const N_T_OFFSET: u64 = 16;
+const N_T_MASK: u64 = 0x1 << N_T_OFFSET;
 
 /// Bits 15:12 — OA[51:48] (FEAT_LPA2).
-pub const OA_51_48_OFFSET: u64 = 12;
-pub const OA_51_48_MASK: u64 = 0xF << OA_51_48_OFFSET;
+const OA_51_48_OFFSET: u64 = 12;
+const OA_51_48_MASK: u64 = 0xF << OA_51_48_OFFSET;
 
 /// Bit 11 — nG (not-Global), or NSE (FEAT_RME, alt layout).
-pub const NG_OFFSET: u64 = 11;
-pub const NG_MASK: u64 = 0x1 << NG_OFFSET;
-pub const NSE_OFFSET: u64 = NG_OFFSET;
-pub const NSE_MASK: u64 = NG_MASK;
+const NG_OFFSET: u64 = 11;
+const NG_MASK: u64 = 0x1 << NG_OFFSET;
+const NSE_OFFSET: u64 = NG_OFFSET;
+const NSE_MASK: u64 = NG_MASK;
 
 /// Bit 10 — AF (Access Flag).
-pub const AF_OFFSET: u64 = 10;
-pub const AF_MASK: u64 = 0x1 << AF_OFFSET;
+const AF_OFFSET: u64 = 10;
+const AF_MASK: u64 = 0x1 << AF_OFFSET;
 
 /// Bits 9:8 — SH[1:0] (Shareability), or OA[51:50] (alt layout).
-pub const SH_OFFSET: u64 = 8;
-pub const SH_MASK: u64 = 0x3 << SH_OFFSET;
-pub const OA_51_50_OFFSET: u64 = SH_OFFSET;
-pub const OA_51_50_MASK: u64 = SH_MASK;
+const SH_OFFSET: u64 = 8;
+const SH_MASK: u64 = 0x3 << SH_OFFSET;
+const OA_51_50_OFFSET: u64 = SH_OFFSET;
+const OA_51_50_MASK: u64 = SH_MASK;
 
 /// Bit 7 — AP[2] (Access Permission bit 2), or nDirty (FEAT_S1PIE, alt layout).
-pub const AP2_OFFSET: u64 = 7;
-pub const AP2_MASK: u64 = 0x1 << AP2_OFFSET;
-pub const N_DIRTY_OFFSET: u64 = AP2_OFFSET;
-pub const N_DIRTY_MASK: u64 = AP2_MASK;
+const AP2_OFFSET: u64 = 7;
+const AP2_MASK: u64 = 0x1 << AP2_OFFSET;
+const N_DIRTY_OFFSET: u64 = AP2_OFFSET;
+const N_DIRTY_MASK: u64 = AP2_MASK;
 
 /// Bit 6 — AP[1] (Access Permission bit 1), or PIIndex[0] (alt layout).
-pub const AP1_OFFSET: u64 = 6;
-pub const AP1_MASK: u64 = 0x1 << AP1_OFFSET;
-pub const PI_INDEX_0_OFFSET: u64 = AP1_OFFSET;
-pub const PI_INDEX_0_MASK: u64 = AP1_MASK;
+const AP1_OFFSET: u64 = 6;
+const AP1_MASK: u64 = 0x1 << AP1_OFFSET;
+const PI_INDEX_0_OFFSET: u64 = AP1_OFFSET;
+const PI_INDEX_0_MASK: u64 = AP1_MASK;
 
 /// Bit 5 — NS (Non-Secure).
-pub const NS_OFFSET: u64 = 5;
-pub const NS_MASK: u64 = 0x1 << NS_OFFSET;
+const NS_OFFSET: u64 = 5;
+const NS_MASK: u64 = 0x1 << NS_OFFSET;
 
 /// Bits 4:2 — AttrIndx[2:0] (index into MAIR_ELx).
-pub const ATTR_INDX_OFFSET: u64 = 2;
-pub const ATTR_INDX_MASK: u64 = 0x7 << ATTR_INDX_OFFSET;
+const ATTR_INDX_OFFSET: u64 = 2;
+const ATTR_INDX_MASK: u64 = 0x7 << ATTR_INDX_OFFSET;
 
 const ADDR_MASK: u64 = 0x0000fffffffff000;
 
@@ -222,6 +219,8 @@ impl ArmPageDescriptor {
     }
 }
 
+pub static KERNEL_PAGE_TABLE: OnceSpinLock<ArmPageTableRoot> = OnceSpinLock::new();
+
 #[repr(align(4096))]
 struct ArmDescriptorGroup([ArmPageDescriptor; NUM_DESCRIPTORS_IN_PAGE]);
 
@@ -257,16 +256,22 @@ pub struct ArmPageTableRoot {
 }
 
 impl ArmPageTableRoot {
-    pub fn create_kernel_root() -> Self {
+    pub fn create_kernel_root(memory: &FdtNode) -> Self {
         let mut group = ArmDescriptorGroupManager::new(0, PageLayer::First);
         let region_size = PageLayer::First.get_region_size();
+        let phys_start = memory.read_u64("reg", 0).unwrap();
+        let phys_range = memory.read_u64("reg", 1).unwrap();
+        let phys_end = phys_start + phys_range;
 
         for (i, descriptor) in unsafe { group.descriptors.as_mut().0.iter_mut().enumerate() } {
+            let page_phys_addr = i * region_size;
+            let accessible = page_phys_addr < phys_end as usize;
+
             descriptor.set_attr_group(0);
-            descriptor.set_phys_address(i * region_size);
-            descriptor.set_af(true);
+            descriptor.set_phys_address(page_phys_addr);
+            descriptor.set_af(accessible);
             descriptor.set_page_descriptor(false);
-            descriptor.set_valid(true);
+            descriptor.set_valid(accessible);
         }
 
         Self { root_group: group }
@@ -323,6 +328,18 @@ impl ArmPageTableRoot {
     }
 }
 
+pub fn build_kernel_page_table(root: &FdtNode) {
+    let memory = root
+        .children()
+        .find(|node| node.name().starts_with("memory"))
+        .unwrap();
+
+    let pages = ArmPageTableRoot::create_kernel_root(memory);
+
+    pages.bind_kernel();
+    let _ = KERNEL_PAGE_TABLE.set(pages);
+}
+
 pub struct ArmDescriptorGroupManager {
     index: usize,
     descriptors: NonNull<ArmDescriptorGroup>,
@@ -330,6 +347,8 @@ pub struct ArmDescriptorGroupManager {
     layer: SpinLock<PageLayer>,
     links: ListLinks,
 }
+
+unsafe impl Sync for ArmDescriptorGroupManager {}
 
 impl ArmDescriptorGroupManager {
     pub fn map_page(&self, index: usize, phys_addr: usize) {
@@ -373,9 +392,9 @@ impl ArmDescriptorGroupManager {
             unsafe { new_group.descriptors.as_mut().0.iter_mut().enumerate() }
         {
             new_descriptor.set_phys_address(phys_addr + i * region_size);
-            new_descriptor.set_af(true);
+            new_descriptor.set_af(descriptor.af());
             new_descriptor.set_page_descriptor(next_layer.is_lowest_layer());
-            new_descriptor.set_valid(true);
+            new_descriptor.set_valid(descriptor.valid());
         }
 
         let mut children = self.children.lock();

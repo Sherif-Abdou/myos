@@ -6,7 +6,7 @@ pub use block::*;
 
 pub use fs::*;
 
-pub use page::ArmPageTableRoot;
+pub use page::*;
 
 use core::fmt::Write;
 

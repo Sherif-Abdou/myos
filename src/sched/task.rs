@@ -4,7 +4,7 @@ use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR},
     impl_link,
     interrupts::{ExceptionRegisters, daifclr, daifset},
-    utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
+    utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
 };
 
 const STACK_SIZE: usize = 4096 * 16;
@@ -38,10 +38,15 @@ pub fn init_scheduler() {
                 blocked_queue: SpinLock::new(List::new()),
                 kill_queue: SpinLock::new(List::new()),
                 scheduled: SpinLock::new(None),
+                idle_task: SpinLock::new(None),
             })
             .is_ok(),
         "Couldn't initialize scheduler"
     );
+    SCHEDULER
+        .get()
+        .unwrap()
+        .idle_task_from_fn(threaded_idle, core::ptr::null_mut());
 }
 
 impl_link!(Task, 0 => links);
@@ -53,6 +58,8 @@ pub struct Sched {
     blocked_queue: SpinLock<List<Task>>,
     // Tasks to be killed on the next tick.
     kill_queue: SpinLock<List<Task>>,
+    // Idle task
+    idle_task: SpinLock<Option<ListArc<Task, 0>>>,
     scheduled: SpinLock<Option<Arc<Task>>>,
 }
 
@@ -139,6 +146,16 @@ pub fn sched_yield() {
     daifclr();
 }
 
+fn threaded_idle(_arg: *mut ()) {
+    daifclr();
+
+    loop {
+        unsafe {
+            asm!("wfi");
+        }
+    }
+}
+
 impl Sched {
     pub fn task(&self) -> Option<Arc<Task>> {
         self.scheduled.lock().as_ref().cloned()
@@ -192,6 +209,29 @@ impl Sched {
         self.run_queue.lock().push_back(task.into());
     }
 
+    #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
+    pub fn idle_task_from_fn(&self, f: fn(*mut ()), arg: *mut ()) {
+        let task = UniqueArc::new(Task {
+            registers: SpinLock::new(ExceptionRegisters::default()),
+            links: ListLinks::new(),
+            stack: create_stack(),
+        });
+
+        let mut registers = task.registers.lock();
+        registers.elr = (thread_wrapper) as u64;
+        registers.gprs[0] = (f as usize) as u64;
+        registers.gprs[1] = arg as u64;
+        registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        assert!(
+            registers.gprs[31].is_multiple_of(16),
+            "Stack ptr is not aligned"
+        );
+        registers.spsr = 0b0101;
+        drop(registers);
+
+        *self.idle_task.lock() = Some(task.into());
+    }
+
     pub fn save_register_state_to_task(&self, state: &ExceptionRegisters) {
         let Some(task) = self.task() else {
             return;
@@ -220,7 +260,12 @@ impl Sched {
 
             Some(&raw const *scheduled.as_ref().unwrap().registers.lock())
         } else {
-            None
+            // Run the idle task.
+            let mut scheduled = self.scheduled.lock();
+            let idle = self.idle_task.lock();
+            *scheduled = Some(idle.as_ref().unwrap().clone_arc());
+
+            Some(&raw const *scheduled.as_ref().unwrap().registers.lock())
         }
     }
 }
