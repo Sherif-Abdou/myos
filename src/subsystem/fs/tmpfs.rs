@@ -1,11 +1,11 @@
 use crate::{
     impl_link,
-    sched::{Mutex, MutexGuard},
+    sched::Mutex,
     subsystem::{
         FileSystem,
         fs::{Inode, InodeContents, InodeDirectoryExt, InodeFileExt},
     },
-    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
 };
 
 const TMPFS_BLOCK_SIZE: usize = 4096;
@@ -111,8 +111,17 @@ pub struct InodeDirectory {
 }
 
 impl InodeDirectoryExt for InodeDirectory {
-    fn list_directory(&self) -> MutexGuard<'_, List<Inode>> {
-        self.children.lock()
+    fn list_directory(&self, list: &mut List<crate::utils::ListLinkWrapper<Arc<Inode>>>) {
+        let mut children = self.children.lock();
+        let mut cursor = children.cursor_mut();
+
+        while let Some(inode) = cursor.get_arc() {
+            let listarc: ListLinkWrapper<Arc<Inode>, 0> = ListLinkWrapper::new(inode.clone());
+            let wrapped: ListArc<_, 0> = UniqueArc::new(listarc).into();
+            list.push_back(wrapped);
+
+            let _ = cursor.next();
+        }
     }
 
     fn create_file(&self, name: &str) {
@@ -121,18 +130,6 @@ impl InodeDirectoryExt for InodeDirectory {
         };
         let node: ListArc<Inode, 0> =
             UniqueArc::new(Inode::new(InodeContents::File(Arc::new(Mutex::new(file))))).into();
-
-        node.meta().set_name(name);
-
-        self.children.lock().push_back(node);
-    }
-
-    fn create_directory(&self, name: &str) {
-        let directory = InodeDirectory {
-            children: Mutex::new(List::new()),
-        };
-        let node: ListArc<Inode, 0> =
-            UniqueArc::new(Inode::new(InodeContents::Directory(Arc::new(directory)))).into();
 
         node.meta().set_name(name);
 
@@ -150,6 +147,18 @@ impl InodeDirectoryExt for InodeDirectory {
                 let _ = cursor.next();
             }
         }
+    }
+
+    fn create_directory(&self, name: &str) {
+        let directory = InodeDirectory {
+            children: Mutex::new(List::new()),
+        };
+        let node: ListArc<Inode, 0> =
+            UniqueArc::new(Inode::new(InodeContents::Directory(Arc::new(directory)))).into();
+
+        node.meta().set_name(name);
+
+        self.children.lock().push_back(node);
     }
 
     fn remove_directory(&self, name: &str) {

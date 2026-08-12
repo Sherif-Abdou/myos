@@ -16,7 +16,7 @@ static DISK: OnceSpinLock<Arc<dyn BlockDriver + Sync + 'static>> = OnceSpinLock:
 
 static BLOCK_CACHE: OnceSpinLock<BlockCache> = OnceSpinLock::new();
 
-const MAX_CACHE_SIZE: usize = 1024;
+const MAX_CACHE_SIZE: usize = 1024 * 64;
 
 pub fn set_disk(disk: Arc<dyn BlockDriver + Sync + 'static>) {
     let _ = DISK.set(disk);

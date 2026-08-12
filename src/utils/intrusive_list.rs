@@ -275,7 +275,7 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
             }
         } else {
             ListCursor {
-                ptr: None,
+                ptr: unsafe { NonNull::new(self.head.as_mut()) },
                 list: self,
             }
         }
@@ -330,6 +330,11 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> Iterator for ListCursor<'a, T, N> 
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.is_sentinel() {
+            self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().next.get() });
+            return None;
+        }
+
         let item = self.ptr.map(|ptr| {
             let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
 
@@ -340,19 +345,20 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> Iterator for ListCursor<'a, T, N> 
         });
 
         self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().next.get() });
-        if self
-            .ptr
-            .is_none_or(|ptr| ptr.addr().get() == self.list.sentinel_addr())
-        {
-            self.ptr = None;
-        }
 
         item
     }
 }
 
 impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursor<'a, T, N> {
+    fn is_sentinel(&self) -> bool {
+        self.ptr.unwrap().addr().get() == self.list.sentinel_addr()
+    }
+
     pub fn get(&self) -> Option<&T> {
+        if self.is_sentinel() {
+            return None;
+        }
         self.ptr.map(|ptr| {
             let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
 
@@ -360,6 +366,21 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursor<'a, T, N> {
             let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
 
             unsafe { (*arc_inner).as_raw().as_ref().unwrap() }
+        })
+    }
+
+    pub fn get_arc(&self) -> Option<Arc<T>> {
+        if self.is_sentinel() {
+            return None;
+        }
+
+        self.ptr.map(|ptr| {
+            let link: Pin<&ListLinks> = unsafe { Pin::new_unchecked(ptr.as_ref()) };
+
+            let ptr = &raw const *link.as_ref();
+            let arc_inner = T::arc_from_link(ptr as *mut ListLinks);
+
+            unsafe { (*arc_inner).make_arc() }
         })
     }
 }
@@ -507,12 +528,12 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursorMut<'a, T, N> {
 }
 
 /// Helper struct that wraps a type in a ListLink
-pub struct ListNode<T, const N: usize = 0> {
+pub struct ListLinkWrapper<T, const N: usize = 0> {
     inner: T,
     links: ListLinks,
 }
 
-impl<T, const N: usize> ListNode<T, N> {
+impl<T, const N: usize> ListLinkWrapper<T, N> {
     pub const fn new(inner: T) -> Self {
         Self {
             inner,
@@ -521,13 +542,13 @@ impl<T, const N: usize> ListNode<T, N> {
     }
 }
 
-impl<T, const N: usize> DerefMut for ListNode<T, N> {
+impl<T, const N: usize> DerefMut for ListLinkWrapper<T, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<T, const N: usize> Deref for ListNode<T, N> {
+impl<T, const N: usize> Deref for ListLinkWrapper<T, N> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -535,29 +556,32 @@ impl<T, const N: usize> Deref for ListNode<T, N> {
     }
 }
 
-impl<T, const N: usize> crate::utils::LinkedNode<ListNode<T, N>, N> for ListNode<T, N> {
+impl<T, const N: usize> crate::utils::LinkedNode<ListLinkWrapper<T, N>, N>
+    for ListLinkWrapper<T, N>
+{
     fn arc_from_link(
         link: *mut crate::utils::ListLinks,
-    ) -> *mut crate::utils::ArcInner<ListNode<T, N>> {
+    ) -> *mut crate::utils::ArcInner<ListLinkWrapper<T, N>> {
         let value_ptr = unsafe {
             (&raw mut *link)
-                .byte_sub(::core::mem::offset_of!(ListNode<T, N>,links))
-                .cast::<ListNode<T, N>>()
+                .byte_sub(::core::mem::offset_of!(ListLinkWrapper<T, N>,links))
+                .cast::<ListLinkWrapper<T, N>>()
         };
         unsafe {
             value_ptr
-                .byte_sub(crate::utils::arc_inner_offset::<ListNode<T, N>>())
-                .cast::<crate::utils::ArcInner<ListNode<T, N>>>()
+                .byte_sub(crate::utils::arc_inner_offset::<ListLinkWrapper<T, N>>())
+                .cast::<crate::utils::ArcInner<ListLinkWrapper<T, N>>>()
         }
     }
     fn link_from_arc(
-        arc: *mut crate::utils::ArcInner<ListNode<T, N>>,
+        arc: *mut crate::utils::ArcInner<ListLinkWrapper<T, N>>,
     ) -> *mut crate::utils::ListLinks {
-        let inner_ptr =
-            unsafe { (&raw mut *arc).byte_add(crate::utils::arc_inner_offset::<ListNode<T, N>>()) };
+        let inner_ptr = unsafe {
+            (&raw mut *arc).byte_add(crate::utils::arc_inner_offset::<ListLinkWrapper<T, N>>())
+        };
         unsafe {
             inner_ptr
-                .byte_add(::core::mem::offset_of!(ListNode<T, N>,links))
+                .byte_add(::core::mem::offset_of!(ListLinkWrapper<T, N>,links))
                 .cast::<crate::utils::ListLinks>()
         }
     }

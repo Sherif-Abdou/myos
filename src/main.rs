@@ -32,7 +32,7 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{FileSystem, TmpFs, build_kernel_page_table, read_super_block},
+    subsystem::{Ext2Fs, FileSystem, TmpFs, build_kernel_page_table},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -139,7 +139,8 @@ pub fn threaded_init(_arg: *mut ()) {
     let mut buf = [0u8; 4];
     file.read(0, &mut buf);
 
-    read_super_block();
+    let fs = Ext2Fs::new();
+    fs.lookup_root();
 
     printk!("Kernel initialized\n");
     loop {

@@ -3,7 +3,7 @@ use core::ffi::CStr;
 use crate::{
     impl_link,
     sched::{Mutex, MutexGuard},
-    utils::{Arc, ArcAny, List, ListLinks, SpinLock, SpinLockGuard},
+    utils::{Arc, ArcAny, List, ListLinkWrapper, ListLinks, SpinLock, SpinLockGuard},
 };
 
 const PERMISSION_READ: u8 = 4;
@@ -16,7 +16,7 @@ pub trait InodeFileExt {
 }
 
 pub trait InodeDirectoryExt {
-    fn list_directory(&self) -> MutexGuard<'_, List<Inode>>;
+    fn list_directory(&self, list: &mut List<ListLinkWrapper<Arc<Inode>>>);
 
     fn create_file(&self, name: &str);
     fn remove_file(&self, name: &str);
@@ -137,13 +137,17 @@ impl Inode {
         contents.remove_directory(name);
     }
 
-    pub fn list_directory<R, F: FnOnce(MutexGuard<'_, List<Inode>>) -> R>(&self, func: F) -> R {
+    pub fn list_directory<R, F: FnOnce(&List<ListLinkWrapper<Arc<Inode>>>) -> R>(
+        &self,
+        func: F,
+    ) -> R {
         let contents = self.contents.lock();
         let InodeContents::Directory(ref contents) = *contents else {
             panic!("list_directory can only be called on a directory.");
         };
-
-        func(contents.list_directory())
+        let mut list = List::new();
+        contents.list_directory(&mut list);
+        func(&list)
     }
 }
 

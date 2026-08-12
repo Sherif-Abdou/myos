@@ -1,6 +1,8 @@
-//! Revision 1 Ext2 FS support.
+//! Revision 1 Ext2 FS support (no features supported).
 
-use crate::{printk, subsystem::block_cache, utils::UniqueArc};
+use crate::{
+    subsystem::{Inode, InodeDirectoryExt, InodeFileExt, block_cache}, utils::{Arc, UniqueArc},
+};
 
 #[repr(C)]
 struct SuperBlock {
@@ -102,6 +104,7 @@ struct BlockGroupDescriptorTable {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Ext2Inode {
     /// Describes file type and access rights.
     mode: u16,
@@ -121,7 +124,7 @@ struct Ext2Inode {
     gid: u16,
     /// Hard links to this inode.
     links_count: u16,
-    /// Total number of blocks reserved for this inode.
+    /// Total number of 512-byte blocks reserved for this inode.
     blocks: u32,
     /// Various Flags for Inode access.
     flags: u32,
@@ -139,10 +142,13 @@ struct Ext2Inode {
     dir_acl: u32,
     /// File fragment location. Unused.
     faddr: u32,
-    /// OS depdendent value.
+    /// OS dependent value.
     osd2: [u8; 12],
 }
 
+/// Header describing an ext2 dentry, excluding the variable length name.
+///
+/// Should be 4 byte aligned in storage.
 #[repr(C)]
 struct LinkedDirectoryEntryHeader {
     /// Inode number to point to. 0 if unused.
@@ -156,13 +162,258 @@ struct LinkedDirectoryEntryHeader {
     // Followed by 0-255 bytes of the file name
 }
 
-pub fn read_super_block() {
-    let mut buf: UniqueArc<[u8; 1024]> = UniqueArc::zeroed();
+pub struct Ext2Fs {
+    super_block: Arc<SuperBlock>,
+}
 
-    block_cache().read(1024, &mut buf[..]);
+impl Ext2Fs {
+    fn block_size(&self) -> u64 {
+        1024 << (self.super_block.log_block_size as u64)
+    }
 
-    let start_lower = buf[0x38] as u16;
-    let start_upper = buf[0x39] as u16;
+    fn group_count(&self) -> u64 {
+        (self.super_block.blocks_count / self.super_block.blocks_per_group) as u64
+    }
 
-    printk!("Magic: {:x}\n", start_lower | (start_upper << 8));
+    fn super_block_offset(&self) -> u64 {
+        0
+    }
+
+    fn group_descriptor_offset(&self) -> u64 {
+        self.super_block_offset() + 1
+    }
+
+    fn group_descriptor_blocks(&self) -> u64 {
+        (self.group_count() * 32).div_ceil(self.block_size())
+    }
+
+    fn block_bitmap_offset(&self) -> u64 {
+        self.group_descriptor_offset() + self.group_descriptor_blocks()
+    }
+
+    fn block_bitmap_blocks(&self) -> u64 {
+        (self.super_block.blocks_per_group as u64).div_ceil(self.block_size() * 8)
+    }
+
+    fn inode_bitmap_offset(&self) -> u64 {
+        self.block_bitmap_offset() + self.block_bitmap_blocks()
+    }
+
+    fn inode_bitmap_blocks(&self) -> u64 {
+        (self.super_block.inodes_per_group as u64).div_ceil(self.block_size() * 8)
+    }
+
+    fn inode_table_offset(&self) -> u64 {
+        self.inode_bitmap_offset() + self.inode_bitmap_blocks()
+    }
+
+    fn inode_table_blocks(&self) -> u64 {
+        (self.super_block.inodes_per_group as u64 * self.super_block.inode_size as u64)
+            .div_ceil(self.block_size())
+    }
+
+    fn parse_super_block() -> SuperBlock {
+        let mut block_raw: UniqueArc<[u8; 256]> = UniqueArc::zeroed();
+
+        block_cache().read(1024, block_raw.as_mut_slice());
+
+        let cast: *const SuperBlock = (*block_raw).as_ptr().cast();
+
+        assert_eq!(unsafe { (*cast).magic }, 0xEF53);
+
+        unsafe { cast.read() }
+    }
+
+    pub fn new() -> Self {
+        Self {
+            super_block: Arc::new(Self::parse_super_block()),
+        }
+    }
+
+    pub fn lookup_root(&self) {
+        assert!(self.inode_exists(2));
+        self.lookup_node(2);
+    }
+
+    fn inode_exists(&self, inode: u32) -> bool {
+        let group = (inode as u64 - 1) / (self.super_block.inodes_per_group as u64);
+        let index = (inode as u64 - 1) % (self.super_block.inodes_per_group as u64);
+
+        let first_inode_bitmap_block =
+            group * self.super_block.blocks_per_group as u64 + self.inode_bitmap_offset() + 1;
+
+        let byte_desired = first_inode_bitmap_block * self.block_size() + index / 8;
+        let bit_desired = index % 8;
+
+        let mut byte = [0u8];
+        block_cache().read(byte_desired as usize, &mut byte);
+
+        ((byte[0] >> bit_desired) & 1) != 0
+    }
+
+    fn lookup_node(&self, inode: u32) -> Option<Ext2Inode> {
+        let mut block_buffer: UniqueArc<[u8; 1024]> = UniqueArc::zeroed();
+
+        let group = (inode as u64 - 1) / (self.super_block.inodes_per_group as u64);
+        let index = (inode as u64 - 1) % (self.super_block.inodes_per_group as u64);
+
+        let first_inode_table_block =
+            group * self.super_block.blocks_per_group as u64 + self.inode_table_offset() + 1;
+
+        let desired_inode_table_offset = first_inode_table_block * self.block_size()
+            + (index * self.super_block.inode_size as u64);
+
+        block_cache().read(
+            desired_inode_table_offset as usize,
+            block_buffer.as_mut_slice(),
+        );
+
+        let inode = (*block_buffer).as_ptr() as *const Ext2Inode;
+        Some(unsafe { inode.read() })
+    }
+}
+
+struct Ext2InodeCursor<'a> {
+    inode: &'a Ext2Inode,
+    /// Which block we're reading right now.
+    block: u32,
+    /// Offset within the 15 block top level list
+    top_offset: u32,
+    // Block offset within block 14's singly linked list
+    l1_offset: u32,
+    // Block offsets within block 15's doubly linked list
+    l2_offsets: [u32; 2],
+}
+
+impl<'a> Ext2InodeCursor<'a> {
+    pub fn new(inode: &'a Ext2Inode) -> Self {
+        Self {
+            inode,
+            block: 0,
+            top_offset: 0,
+            l1_offset: 0,
+            l2_offsets: [0; 2],
+        }
+    }
+
+    fn jump_to(&mut self, block: u32) {
+        const ASSUMED_BLOCK_SIZE: u32 = 1024;
+        const BYTES_FOR_BLOCK: u32 = 4;
+        const POINTERS_PER_BLOCK: u32 = ASSUMED_BLOCK_SIZE / BYTES_FOR_BLOCK;
+
+        if block < 13 {
+            self.top_offset = block;
+            self.l1_offset = 0;
+            self.l2_offsets = [0; 2];
+        } else if block - 13 < POINTERS_PER_BLOCK {
+            self.top_offset = 13;
+            self.l1_offset = block - 13;
+            self.l2_offsets = [0; 2];
+        } else {
+            let l2_index = block - POINTERS_PER_BLOCK - 13;
+            self.top_offset = 14;
+            self.l1_offset = 0;
+            let upper_l2_offset = l2_index / POINTERS_PER_BLOCK;
+            let lower_l2_offset = l2_index % POINTERS_PER_BLOCK;
+            self.l2_offsets = [upper_l2_offset, lower_l2_offset];
+        }
+    }
+
+    fn next_block(&mut self) {
+        self.jump_to(self.block + 1);
+    }
+
+    fn get_current_block(&self) -> u32 {
+        let mut buf = [0u8; 4];
+
+        let top_level_block = self.inode.block[self.top_offset as usize];
+
+        if self.top_offset < 13 {
+            top_level_block
+        } else if self.top_offset == 14 {
+            block_cache().read(top_level_block as usize * 1024, &mut buf);
+            u32::from_le_bytes(buf)
+        } else {
+            block_cache().read(top_level_block as usize * 1024, &mut buf);
+            let next_level_block = u32::from_le_bytes(buf);
+            block_cache().read(next_level_block as usize * 1024, &mut buf);
+            u32::from_le_bytes(buf)
+        }
+    }
+
+    fn read(&mut self, mut offset: u64, buf: &mut [u8]) -> usize {
+        let mut have_read = 0;
+        while have_read < buf.len() {
+            let block_number = (offset / 1024) as u32;
+            let block_offset = (offset % 1024) as u32;
+            self.jump_to(block_number);
+
+            let block = self.get_current_block();
+            if block == 0 {
+                return have_read;
+            }
+
+            let to_read_in_block =
+                (1024 - block_offset).min(buf.len().saturating_sub(have_read) as u32);
+
+            block_cache().read(
+                (block * 1024 + block_offset) as usize,
+                &mut buf[(have_read)..(have_read + to_read_in_block as usize)],
+            );
+
+            have_read += to_read_in_block as usize;
+            offset += have_read as u64;
+        }
+        have_read
+    }
+}
+
+struct Ext2InodeWrapper {
+    super_block: Arc<SuperBlock>,
+    inode: Ext2Inode,
+}
+
+impl Ext2InodeWrapper {}
+
+impl InodeFileExt for Ext2InodeWrapper {
+    fn read(&self, offset: u64, buffer: &mut [u8]) -> usize {
+        let mut cursor = Ext2InodeCursor::new(&self.inode);
+
+        cursor.read(offset, buffer)
+    }
+
+    fn write(&self, _offset: u64, _buffer: &[u8]) {
+        todo!("Read-only right now");
+    }
+}
+
+impl InodeDirectoryExt for Ext2InodeWrapper {
+    fn list_directory(&self, list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<super::Inode>>>) {
+        // TODO
+        let mut offset = 0;
+        let mut dentry_header = [0u8; 8];
+
+        while offset < 1024 {
+            let bytes_read = self.read(offset, &mut dentry_header);
+            let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
+
+            offset += unsafe { (*overlay).rec_len as u64 };
+        }
+    }
+
+    fn create_file(&self, name: &str) {
+        todo!()
+    }
+
+    fn remove_file(&self, name: &str) {
+        todo!()
+    }
+
+    fn create_directory(&self, name: &str) {
+        todo!()
+    }
+
+    fn remove_directory(&self, name: &str) {
+        todo!()
+    }
 }
