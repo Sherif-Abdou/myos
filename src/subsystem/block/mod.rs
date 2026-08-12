@@ -154,10 +154,15 @@ impl BlockCache {
         let _ = sector_cursor.next_back();
 
         let block_entry = sector_cursor.get_arc().unwrap();
+        block_entry.inner.lock().fetch_in_progress = true;
 
-        block_entry.wait_queue.enqueue();
-        self.workqueue
-            .enqueue_work(Self::fetch_wq_work, Some(block_entry.clone()));
+        block_entry.wait_queue.prepare_enqueue(|| {
+            self.workqueue
+                .enqueue_work(Self::fetch_wq_work, Some(block_entry.clone()));
+
+            true
+        });
+        drop(sectors);
         block_entry.wait_queue.block();
 
         block_entry
@@ -183,15 +188,15 @@ impl BlockCache {
 
         let len = buf.len().min(max_len);
 
-        if let Some(sector) = self
-            .sectors
-            .lock()
+        let sectors = self.sectors.lock();
+        if let Some(sector) = sectors
             .cursor()
             .find(|entry| entry.lock_inner().sector == block)
         {
             let sector = Self::wait_for_fetch(sector);
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
         } else {
+            drop(sectors);
             let sector = self.fetch_block(block);
             let sector = sector.lock_inner();
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
@@ -236,6 +241,7 @@ impl BlockCache {
                 sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);
             });
         } else {
+            drop(sectors);
             let sector = self.fetch_block(block);
             let mut sector = sector.lock_inner();
             sector.modify_block(|sector_buffer| {

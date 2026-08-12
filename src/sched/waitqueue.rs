@@ -48,10 +48,12 @@ impl WaitQueue {
             })
             .into(),
         );
+
         SCHEDULER.get().unwrap().block_this_task();
+        drop(wait_queue);
     }
 
-    pub fn prepare_enqueue(&self, f: impl FnOnce() -> bool) {
+    pub fn prepare_enqueue(&self, f: impl FnOnce() -> bool) -> bool {
         let mut wait_queue = self.queue.lock();
         let should_wait = f();
 
@@ -68,7 +70,10 @@ impl WaitQueue {
                 .into(),
             );
             SCHEDULER.get().unwrap().block_this_task();
+            drop(wait_queue);
         }
+
+        should_wait
     }
 
     pub fn unblock_front(&self) {

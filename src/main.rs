@@ -25,14 +25,14 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, kbox},
+    allocators::{KBox, kbox},
     arm_pl::init_from_dtb_node,
     driver::DeviceBus,
     dtb::{Fdt, find_earlyconsole_node},
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{FileSystem, TmpFs, build_kernel_page_table},
+    subsystem::{FileSystem, TmpFs, build_kernel_page_table, read_super_block},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -138,6 +138,8 @@ pub fn threaded_init(_arg: *mut ()) {
     file.write(0, &[1, 2, 3, 4]);
     let mut buf = [0u8; 4];
     file.read(0, &mut buf);
+
+    read_super_block();
 
     printk!("Kernel initialized\n");
     loop {

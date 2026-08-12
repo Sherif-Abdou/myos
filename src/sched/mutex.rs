@@ -23,14 +23,16 @@ impl<T> Mutex<T> {
 
     pub fn lock(&self) -> MutexGuard<'_, T> {
         loop {
-            if self
-                .available
-                .compare_exchange(false, true, SeqCst, SeqCst)
-                .is_ok()
-            {
+            let should_block = self.wait_queue.prepare_enqueue(|| {
+                !self
+                    .available
+                    .compare_exchange(false, true, SeqCst, SeqCst)
+                    .is_ok()
+            });
+            if !should_block {
                 return MutexGuard { mutex: self };
             } else {
-                self.wait_queue.enqueue_and_block();
+                self.wait_queue.block();
             }
         }
     }

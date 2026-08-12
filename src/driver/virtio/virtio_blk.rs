@@ -230,8 +230,10 @@ impl BlockDriver for VirtioBlkDriver {
         drop(descriptors);
         drop(queue);
 
-        while unsafe { read_volatile(&raw mut self.queue.lock().used.idx) } == used_idx {
-            self.wait_queue.enqueue_and_block();
+        while self.wait_queue.prepare_enqueue(
+            || unsafe { read_volatile(&raw mut self.queue.lock().used.idx) } == used_idx,
+        ) {
+            self.wait_queue.block();
         }
     }
 
@@ -278,8 +280,10 @@ impl BlockDriver for VirtioBlkDriver {
         drop(descriptors);
         drop(queue);
 
-        while unsafe { read_volatile(&raw mut self.queue.lock().used.idx) } == used_idx {
-            self.wait_queue.enqueue_and_block();
+        while self.wait_queue.prepare_enqueue(
+            || unsafe { read_volatile(&raw mut self.queue.lock().used.idx) } == used_idx,
+        ) {
+            self.wait_queue.block();
         }
 
         let buffer = &self.descriptors.lock().buffers[buffer_descriptor_idx].buf;

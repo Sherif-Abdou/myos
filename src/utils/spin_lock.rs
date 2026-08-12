@@ -30,13 +30,13 @@ impl<T> SpinLock<T> {
         // Spin until we get the lock.
         while self
             .lock
-            .compare_exchange(0x0, daif, SeqCst, SeqCst)
+            .compare_exchange(0x0, 0x1, SeqCst, SeqCst)
             .is_err()
         {
             spin_loop();
         }
 
-        SpinLockGuard { lock: self }
+        SpinLockGuard { lock: self, daif }
     }
 }
 
@@ -44,6 +44,7 @@ unsafe impl<T> Sync for SpinLock<T> {}
 
 pub struct SpinLockGuard<'a, T> {
     lock: &'a SpinLock<T>,
+    daif: usize,
 }
 
 impl<T> Deref for SpinLockGuard<'_, T> {
@@ -62,16 +63,14 @@ impl<T> DerefMut for SpinLockGuard<'_, T> {
 
 impl<T> Drop for SpinLockGuard<'_, T> {
     fn drop(&mut self) {
-        let daif = self.lock.lock.load(core::sync::atomic::Ordering::SeqCst);
-
-        unsafe {
-            asm!("msr daif, {x}", x = in(reg) daif);
-        };
-
+        let daif = self.daif;
         // Free the lock.
         self.lock
             .lock
             .store(0, core::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            asm!("msr daif, {x}", x = in(reg) daif);
+        };
     }
 }
 

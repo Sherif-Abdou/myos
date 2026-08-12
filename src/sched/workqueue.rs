@@ -24,14 +24,15 @@ impl Workqueue {
         let workqueue: Arc<Workqueue> = unsafe { transmute(arg) };
 
         loop {
-            let queue = workqueue.queue.lock();
-            if queue.is_empty() {
-                workqueue.waiter.enqueue_and_block();
+            let mut queue = workqueue.queue.lock();
+            let is_empty = workqueue.waiter.prepare_enqueue(|| queue.is_empty());
+            if is_empty {
                 drop(queue);
+                workqueue.waiter.block();
                 continue;
             }
+            let item = queue.remove_front();
             drop(queue);
-            let item = workqueue.queue.lock().remove_front();
             if let Some(item) = item {
                 (item.function)(item.arg.clone());
             }

@@ -1,3 +1,4 @@
+mod ext2;
 mod inode;
 mod tmpfs;
 
@@ -6,6 +7,7 @@ use crate::{
     utils::{Arc, List},
 };
 
+pub use ext2::read_super_block;
 pub use inode::*;
 pub use tmpfs::TmpFs;
 
