@@ -1,8 +1,11 @@
 use crate::{
-    impl_link, sched::Mutex, subsystem::{
+    impl_link,
+    sched::Mutex,
+    subsystem::{
         FileSystem, FsResult,
         fs::{Inode, InodeOperations},
-    }, utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
+    },
+    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
 };
 
 use super::FsError;

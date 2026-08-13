@@ -1,8 +1,15 @@
 //! Revision 1 Ext2 FS support (no features supported).
 
+use core::ffi::CStr;
+
 use crate::{
-    impl_link, printk, sched::Mutex, subsystem::{FsResult, InodeOperations, block_cache}, utils::{Arc, List, ListArc, ListLinks, UniqueArc},
+    impl_link,
+    sched::Mutex,
+    subsystem::{FsResult, Inode, InodeOperations, block_cache},
+    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, UniqueArc},
 };
+
+use super::FsError;
 
 #[repr(C)]
 struct SuperBlock {
@@ -85,6 +92,52 @@ struct SuperBlock {
     algo_bitmap: u32,
 }
 
+impl SuperBlock {
+    fn block_size(&self) -> u64 {
+        1024 << (self.log_block_size as u64)
+    }
+
+    fn group_count(&self) -> u64 {
+        (self.blocks_count / self.blocks_per_group) as u64
+    }
+
+    fn super_block_offset(&self) -> u64 {
+        0
+    }
+
+    fn group_descriptor_offset(&self) -> u64 {
+        self.super_block_offset() + 1
+    }
+
+    fn group_descriptor_blocks(&self) -> u64 {
+        (self.group_count() * 32).div_ceil(self.block_size())
+    }
+
+    fn block_bitmap_offset(&self) -> u64 {
+        self.group_descriptor_offset() + self.group_descriptor_blocks()
+    }
+
+    fn block_bitmap_blocks(&self) -> u64 {
+        (self.blocks_per_group as u64).div_ceil(self.block_size() * 8)
+    }
+
+    fn inode_bitmap_offset(&self) -> u64 {
+        self.block_bitmap_offset() + self.block_bitmap_blocks()
+    }
+
+    fn inode_bitmap_blocks(&self) -> u64 {
+        (self.inodes_per_group as u64).div_ceil(self.block_size() * 8)
+    }
+
+    fn inode_table_offset(&self) -> u64 {
+        self.inode_bitmap_offset() + self.inode_bitmap_blocks()
+    }
+
+    fn inode_table_blocks(&self) -> u64 {
+        (self.inodes_per_group as u64 * self.inode_size as u64).div_ceil(self.block_size())
+    }
+}
+
 #[repr(C)]
 struct BlockGroupDescriptorTable {
     /// Block ID of first block in the group's block bitmap.
@@ -146,6 +199,16 @@ struct Ext2Inode {
     osd2: [u8; 12],
 }
 
+impl Ext2Inode {
+    fn is_file(&self) -> bool {
+        (self.mode >> 12) == 0x8
+    }
+
+    fn is_directory(&self) -> bool {
+        (self.mode >> 12) == 0x4
+    }
+}
+
 /// Header describing an ext2 dentry, excluding the variable length name.
 ///
 /// Should be 4 byte aligned in storage.
@@ -168,51 +231,6 @@ pub struct Ext2Fs {
 }
 
 impl Ext2Fs {
-    fn block_size(&self) -> u64 {
-        1024 << (self.super_block.log_block_size as u64)
-    }
-
-    fn group_count(&self) -> u64 {
-        (self.super_block.blocks_count / self.super_block.blocks_per_group) as u64
-    }
-
-    fn super_block_offset(&self) -> u64 {
-        0
-    }
-
-    fn group_descriptor_offset(&self) -> u64 {
-        self.super_block_offset() + 1
-    }
-
-    fn group_descriptor_blocks(&self) -> u64 {
-        (self.group_count() * 32).div_ceil(self.block_size())
-    }
-
-    fn block_bitmap_offset(&self) -> u64 {
-        self.group_descriptor_offset() + self.group_descriptor_blocks()
-    }
-
-    fn block_bitmap_blocks(&self) -> u64 {
-        (self.super_block.blocks_per_group as u64).div_ceil(self.block_size() * 8)
-    }
-
-    fn inode_bitmap_offset(&self) -> u64 {
-        self.block_bitmap_offset() + self.block_bitmap_blocks()
-    }
-
-    fn inode_bitmap_blocks(&self) -> u64 {
-        (self.super_block.inodes_per_group as u64).div_ceil(self.block_size() * 8)
-    }
-
-    fn inode_table_offset(&self) -> u64 {
-        self.inode_bitmap_offset() + self.inode_bitmap_blocks()
-    }
-
-    fn inode_table_blocks(&self) -> u64 {
-        (self.super_block.inodes_per_group as u64 * self.super_block.inode_size as u64)
-            .div_ceil(self.block_size())
-    }
-
     fn parse_super_block() -> SuperBlock {
         let mut block_raw: UniqueArc<[u8; 256]> = UniqueArc::zeroed();
 
@@ -226,45 +244,11 @@ impl Ext2Fs {
     }
 
     pub fn new() -> Self {
+        let super_block = Arc::new(Self::parse_super_block());
         Self {
-            super_block: Arc::new(Self::parse_super_block()),
-            cache: Arc::new(Ext2InodeCache::new()),
+            cache: Arc::new(Ext2InodeCache::new(super_block.clone())),
+            super_block,
         }
-    }
-
-    pub fn lookup_root(&self) {
-        assert!(self.inode_exists(2));
-        let inode = self.lookup_node(2).unwrap();
-
-        let wrapper = UniqueArc::new(Ext2InodeWrapper {
-            super_block: self.super_block.clone(),
-            inode_cache: self.cache.clone(),
-            number: 2,
-            inode,
-            links: ListLinks::new(),
-        });
-
-        let node = self.cache.insert(wrapper);
-
-        let mut list = List::new();
-        let _ = node.list_directory(&mut list);
-        assert!(list.is_empty());
-    }
-
-    fn inode_exists(&self, inode: u32) -> bool {
-        let group = (inode as u64 - 1) / (self.super_block.inodes_per_group as u64);
-        let index = (inode as u64 - 1) % (self.super_block.inodes_per_group as u64);
-
-        let first_inode_bitmap_block =
-            group * self.super_block.blocks_per_group as u64 + self.inode_bitmap_offset() + 1;
-
-        let byte_desired = first_inode_bitmap_block * self.block_size() + index / 8;
-        let bit_desired = index % 8;
-
-        let mut byte = [0u8];
-        block_cache().read(byte_desired as usize, &mut byte);
-
-        ((byte[0] >> bit_desired) & 1) != 0
     }
 
     fn lookup_node(&self, inode: u32) -> Option<Ext2Inode> {
@@ -273,10 +257,11 @@ impl Ext2Fs {
         let group = (inode as u64 - 1) / (self.super_block.inodes_per_group as u64);
         let index = (inode as u64 - 1) % (self.super_block.inodes_per_group as u64);
 
-        let first_inode_table_block =
-            group * self.super_block.blocks_per_group as u64 + self.inode_table_offset() + 1;
+        let first_inode_table_block = group * self.super_block.blocks_per_group as u64
+            + self.super_block.inode_table_offset()
+            + 1;
 
-        let desired_inode_table_offset = first_inode_table_block * self.block_size()
+        let desired_inode_table_offset = first_inode_table_block * self.super_block.block_size()
             + (index * self.super_block.inode_size as u64);
 
         block_cache().read(
@@ -385,12 +370,59 @@ impl<'a> Ext2InodeCursor<'a> {
 }
 
 struct Ext2InodeCache {
+    super_block: Arc<SuperBlock>,
     cache: Mutex<List<Ext2InodeWrapper>>,
 }
 
+impl Arc<Ext2InodeCache> {
+    fn lookup_or_create(&self, inode_number: u32) -> FsResult<Arc<Ext2InodeWrapper>> {
+        let node = self.lookup(inode_number);
+
+        if let Some(node) = node {
+            Ok(node)
+        } else {
+            if !self.inode_exists(inode_number) {
+                return Err(FsError::NoExist);
+            }
+
+            let mut block_buffer: UniqueArc<[u8; 1024]> = UniqueArc::zeroed();
+
+            let group = (inode_number as u64 - 1) / (self.super_block.inodes_per_group as u64);
+            let index = (inode_number as u64 - 1) % (self.super_block.inodes_per_group as u64);
+
+            let first_inode_table_block = group * self.super_block.blocks_per_group as u64
+                + self.super_block.inode_table_offset()
+                + 1;
+
+            let desired_inode_table_offset = first_inode_table_block
+                * self.super_block.block_size()
+                + (index * self.super_block.inode_size as u64);
+
+            block_cache().read(
+                desired_inode_table_offset as usize,
+                block_buffer.as_mut_slice(),
+            );
+
+            let inode = (*block_buffer).as_ptr() as *const Ext2Inode;
+            let node = unsafe { inode.read() };
+
+            let wrapped = UniqueArc::new(Ext2InodeWrapper {
+                super_block: self.super_block.clone(),
+                inode_cache: self.clone(),
+                number: inode_number,
+                ext2_inode: node,
+                links: ListLinks::new(),
+            });
+
+            Ok(self.insert(wrapped))
+        }
+    }
+}
+
 impl Ext2InodeCache {
-    pub fn new() -> Self {
+    pub fn new(super_block: Arc<SuperBlock>) -> Self {
         Self {
+            super_block,
             cache: Mutex::new(List::new()),
         }
     }
@@ -430,13 +462,30 @@ impl Ext2InodeCache {
             cursor.remove();
         }
     }
+
+    fn inode_exists(&self, inode: u32) -> bool {
+        let group = (inode as u64 - 1) / (self.super_block.inodes_per_group as u64);
+        let index = (inode as u64 - 1) % (self.super_block.inodes_per_group as u64);
+
+        let first_inode_bitmap_block = group * self.super_block.blocks_per_group as u64
+            + self.super_block.inode_bitmap_offset()
+            + 1;
+
+        let byte_desired = first_inode_bitmap_block * self.super_block.block_size() + index / 8;
+        let bit_desired = index % 8;
+
+        let mut byte = [0u8];
+        block_cache().read(byte_desired as usize, &mut byte);
+
+        ((byte[0] >> bit_desired) & 1) != 0
+    }
 }
 
 struct Ext2InodeWrapper {
     super_block: Arc<SuperBlock>,
     inode_cache: Arc<Ext2InodeCache>,
     number: u32,
-    inode: Ext2Inode,
+    ext2_inode: Ext2Inode,
     links: ListLinks,
 }
 
@@ -452,16 +501,20 @@ impl Drop for Ext2InodeWrapper {
 
 impl InodeOperations for Ext2InodeWrapper {
     fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
-        let mut cursor = Ext2InodeCursor::new(&self.inode);
+        let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
         Ok(cursor.read(offset, buffer))
     }
 
     fn list_directory(
         &self,
-        _list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<super::Inode>>>,
+        list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<super::Inode>>>,
     ) -> FsResult<()> {
-        let mut cursor = Ext2InodeCursor::new(&self.inode);
+        if !self.ext2_inode.is_directory() {
+            return Err(FsError::Unsupported);
+        }
+
+        let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
         let mut offset = 0;
         let mut dentry_header = [0u8; 8];
@@ -471,16 +524,24 @@ impl InodeOperations for Ext2InodeWrapper {
         cursor.jump_to(0);
         while cursor.get_current_block() != 0 {
             while offset < 1024 {
-                // TODO
                 let _ = cursor.read(offset, &mut dentry_header);
                 let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
-                let name_len = (unsafe { (*overlay).name_len } as usize).min(32);
+                let inode_number = unsafe { (*overlay).inode };
+                if inode_number != 0 {
+                    let name_len = (unsafe { (*overlay).name_len } as usize).min(32);
 
-                cursor.read(offset + 8, &mut name_buffer[..name_len]);
+                    cursor.read(offset + 8, &mut name_buffer[..name_len]);
 
-                let name = str::from_utf8(&name_buffer[..name_len]).unwrap();
-                printk!("File with name {} found.\n", name);
+                    let name = str::from_utf8(&name_buffer[..name_len]).unwrap();
 
+                    let child = self.inode_cache.lookup_or_create(inode_number)?;
+
+                    let fs_inode = Arc::new(Inode::new(child));
+
+                    fs_inode.meta().set_name(name);
+
+                    list.push_back(UniqueArc::new(ListLinkWrapper::new(fs_inode)).into());
+                }
                 offset += unsafe { (*overlay).rec_len as u64 };
             }
 
