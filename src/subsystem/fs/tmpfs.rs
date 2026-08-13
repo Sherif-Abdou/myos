@@ -1,12 +1,11 @@
 use crate::{
-    impl_link,
-    sched::Mutex,
-    subsystem::{
-        FileSystem,
-        fs::{Inode, InodeContents, InodeDirectoryExt, InodeFileExt},
-    },
-    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
+    impl_link, sched::Mutex, subsystem::{
+        FileSystem, FsResult,
+        fs::{Inode, InodeOperations},
+    }, utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
 };
+
+use super::FsError;
 
 const TMPFS_BLOCK_SIZE: usize = 4096;
 
@@ -28,8 +27,8 @@ pub struct InodeFile {
     blocks: List<FileBlock>,
 }
 
-impl InodeFileExt for Mutex<InodeFile> {
-    fn read(&self, mut offset: u64, buffer: &mut [u8]) -> usize {
+impl InodeOperations for Mutex<InodeFile> {
+    fn read(&self, mut offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
         let mut inner = self.lock();
         let mut cursor = inner.blocks.cursor_mut();
         let mut bytes_read = 0;
@@ -62,10 +61,10 @@ impl InodeFileExt for Mutex<InodeFile> {
             let _ = cursor.next();
         }
 
-        bytes_read
+        Ok(bytes_read)
     }
 
-    fn write(&self, mut offset: u64, buffer: &[u8]) {
+    fn write(&self, mut offset: u64, buffer: &[u8]) -> FsResult<()> {
         let mut inner = self.lock();
         let mut cursor = inner.blocks.cursor_mut();
         let mut bytes_written = 0;
@@ -103,6 +102,8 @@ impl InodeFileExt for Mutex<InodeFile> {
                 let _ = cursor.next_back();
             }
         }
+
+        Ok(())
     }
 }
 
@@ -110,8 +111,8 @@ pub struct InodeDirectory {
     children: Mutex<List<Inode>>,
 }
 
-impl InodeDirectoryExt for InodeDirectory {
-    fn list_directory(&self, list: &mut List<crate::utils::ListLinkWrapper<Arc<Inode>>>) {
+impl InodeOperations for InodeDirectory {
+    fn list_directory(&self, list: &mut List<ListLinkWrapper<Arc<Inode>>>) -> super::FsResult<()> {
         let mut children = self.children.lock();
         let mut cursor = children.cursor_mut();
 
@@ -122,20 +123,24 @@ impl InodeDirectoryExt for InodeDirectory {
 
             let _ = cursor.next();
         }
+        Ok(())
     }
 
-    fn create_file(&self, name: &str) {
+    fn create_file(&self, name: &str) -> FsResult<()> {
         let file = InodeFile {
             blocks: List::new(),
         };
-        let node: ListArc<Inode, 0> =
-            UniqueArc::new(Inode::new(InodeContents::File(Arc::new(Mutex::new(file))))).into();
+        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(Arc::new(Mutex::new(file)))).into();
 
         node.meta().set_name(name);
 
         self.children.lock().push_back(node);
-    }
 
+        Ok(())
+    }
+}
+
+impl InodeDirectory {
     fn remove_file(&self, name: &str) {
         let mut children = self.children.lock();
         let mut cursor = children.cursor_mut();
@@ -153,8 +158,7 @@ impl InodeDirectoryExt for InodeDirectory {
         let directory = InodeDirectory {
             children: Mutex::new(List::new()),
         };
-        let node: ListArc<Inode, 0> =
-            UniqueArc::new(Inode::new(InodeContents::Directory(Arc::new(directory)))).into();
+        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(Arc::new(directory))).into();
 
         node.meta().set_name(name);
 
@@ -176,7 +180,7 @@ impl TmpFs {
         let root = Arc::new(InodeDirectory {
             children: Mutex::new(List::new()),
         });
-        let root = Inode::new(InodeContents::Directory(root));
+        let root = Inode::new(root);
         root.meta().set_name("");
 
         Self {
@@ -188,5 +192,77 @@ impl TmpFs {
 impl FileSystem for TmpFs {
     fn root(&self) -> Arc<Inode> {
         self.root.clone()
+    }
+
+    fn open(&self, path: &str) -> FsResult<Arc<Inode>> {
+        let parts = path.split("/");
+
+        let mut current = self.root();
+        for part in parts {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor
+                    .get()
+                    .is_some_and(|child| child.meta().name() != part)
+                {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = (*child).clone();
+        }
+        Ok(current)
+    }
+
+    fn create(&self, path: &str) -> FsResult<Arc<Inode>> {
+        let parts = path.split("/");
+        let num_parts = path.chars().filter(|c| *c == '/').count();
+
+        let mut current = self.root();
+        for part in parts.take(num_parts - 1) {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor
+                    .get()
+                    .is_some_and(|child| child.meta().name() != part)
+                {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = (*child).clone();
+        }
+
+        let child_to_create = path.split('/').nth(num_parts).unwrap();
+        current.create_file(child_to_create)?;
+
+        current.list_directory(|list| {
+            let mut cursor = list.cursor();
+            while cursor
+                .get()
+                .is_some_and(|child| child.meta().name() != child_to_create)
+            {
+                let _ = cursor.next();
+            }
+
+            cursor
+                .get_arc()
+                .map(|wrapper| (*wrapper).clone())
+                .ok_or(FsError::NoExist)
+        })?
     }
 }

@@ -135,9 +135,16 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let fs = TmpFs::new();
     let file = fs.create("/hello.txt").unwrap();
-    file.write(0, &[1, 2, 3, 4]);
+    file.write(0, &[1, 2, 3, 4]).unwrap();
     let mut buf = [0u8; 4];
-    file.read(0, &mut buf);
+    file.read(0, &mut buf).unwrap();
+    assert_eq!(buf, [1, 2, 3, 4]);
+
+    let _ = fs.root().list_directory(|directory| {
+        for node in directory.cursor() {
+            printk!("File: {}\n", node.meta().name());
+        }
+    });
 
     let fs = Ext2Fs::new();
     fs.lookup_root();

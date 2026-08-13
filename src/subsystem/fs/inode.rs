@@ -10,23 +10,40 @@ const PERMISSION_READ: u8 = 4;
 const PERMISSION_WRITE: u8 = 2;
 const PERMISSION_EXECUTE: u8 = 1;
 
-pub trait InodeFileExt {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> usize;
-    fn write(&self, offset: u64, buffer: &[u8]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsError {
+    Unsupported,
+    NoExist,
 }
 
-pub trait InodeDirectoryExt {
-    fn list_directory(&self, list: &mut List<ListLinkWrapper<Arc<Inode>>>);
+pub type FsResult<T> = Result<T, FsError>;
 
-    fn create_file(&self, name: &str);
-    fn remove_file(&self, name: &str);
-    fn create_directory(&self, name: &str);
-    fn remove_directory(&self, name: &str);
-}
+pub trait InodeOperations {
+    fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+        let _ = offset;
+        let _ = buffer;
 
-pub enum InodeContents {
-    Directory(Arc<dyn InodeDirectoryExt>),
-    File(Arc<dyn InodeFileExt>),
+        Err(FsError::Unsupported)
+    }
+
+    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+        let _ = offset;
+        let _ = buffer;
+
+        Err(FsError::Unsupported)
+    }
+
+    fn list_directory(&self, list: &mut List<ListLinkWrapper<Arc<Inode>>>) -> FsResult<()> {
+        let _ = list;
+
+        Err(FsError::Unsupported)
+    }
+
+    fn create_file(&self, name: &str) -> FsResult<()> {
+        let _ = name;
+
+        Err(FsError::Unsupported)
+    }
 }
 
 pub struct InodeMeta {
@@ -57,12 +74,12 @@ impl InodeMeta {
 
 pub struct Inode {
     meta: SpinLock<InodeMeta>,
-    contents: Mutex<InodeContents>,
+    operations: Mutex<Arc<dyn InodeOperations>>,
     pub links: ListLinks,
 }
 
 impl Inode {
-    pub fn new(contents: InodeContents) -> Self {
+    pub fn new(operations: Arc<dyn InodeOperations>) -> Self {
         Self {
             meta: SpinLock::new(InodeMeta {
                 name_buf: [0u8; 32],
@@ -71,7 +88,7 @@ impl Inode {
                 file_size: 0,
                 driver_data: None,
             }),
-            contents: Mutex::new(contents),
+            operations: Mutex::new(operations),
             links: ListLinks::new(),
         }
     }
@@ -80,74 +97,32 @@ impl Inode {
         self.meta.lock()
     }
 
-    pub fn contents(&self) -> MutexGuard<'_, InodeContents> {
-        self.contents.lock()
+    pub fn contents(&self) -> MutexGuard<'_, Arc<dyn InodeOperations>> {
+        self.operations.lock()
     }
 }
 
 impl Inode {
-    pub fn read(&self, offset: u64, buffer: &mut [u8]) -> usize {
-        let contents = self.contents.lock();
-        let InodeContents::File(ref contents) = *contents else {
-            return 0;
-        };
-
-        contents.read(offset, buffer)
+    pub fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+        self.contents().read(offset, buffer)
     }
 
-    pub fn write(&self, offset: u64, buffer: &[u8]) {
-        let contents = self.contents.lock();
-        let InodeContents::File(ref contents) = *contents else {
-            return;
-        };
-
-        contents.write(offset, buffer);
-    }
-
-    pub fn create_file(&self, name: &str) {
-        let contents = self.contents.lock();
-        let InodeContents::Directory(ref contents) = *contents else {
-            return;
-        };
-
-        contents.create_file(name);
-    }
-    pub fn remove_file(&self, name: &str) {
-        let contents = self.contents.lock();
-        let InodeContents::Directory(ref contents) = *contents else {
-            return;
-        };
-
-        contents.remove_file(name);
-    }
-    pub fn create_directory(&self, name: &str) {
-        let contents = self.contents.lock();
-        let InodeContents::Directory(ref contents) = *contents else {
-            return;
-        };
-
-        contents.create_directory(name);
-    }
-    pub fn remove_directory(&self, name: &str) {
-        let contents = self.contents.lock();
-        let InodeContents::Directory(ref contents) = *contents else {
-            return;
-        };
-
-        contents.remove_directory(name);
+    pub fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+        self.contents().write(offset, buffer)
     }
 
     pub fn list_directory<R, F: FnOnce(&List<ListLinkWrapper<Arc<Inode>>>) -> R>(
         &self,
         func: F,
-    ) -> R {
-        let contents = self.contents.lock();
-        let InodeContents::Directory(ref contents) = *contents else {
-            panic!("list_directory can only be called on a directory.");
-        };
+    ) -> FsResult<R> {
         let mut list = List::new();
-        contents.list_directory(&mut list);
-        func(&list)
+        self.contents()
+            .list_directory(&mut list)
+            .map(|_| func(&list))
+    }
+
+    pub fn create_file(&self, name: &str) -> FsResult<()> {
+        self.operations.lock().create_file(name)
     }
 }
 

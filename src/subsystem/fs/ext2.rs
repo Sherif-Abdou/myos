@@ -1,7 +1,7 @@
 //! Revision 1 Ext2 FS support (no features supported).
 
 use crate::{
-    subsystem::{Inode, InodeDirectoryExt, InodeFileExt, block_cache}, utils::{Arc, UniqueArc},
+    impl_link, printk, sched::Mutex, subsystem::{FsResult, InodeOperations, block_cache}, utils::{Arc, List, ListArc, ListLinks, UniqueArc},
 };
 
 #[repr(C)]
@@ -164,6 +164,7 @@ struct LinkedDirectoryEntryHeader {
 
 pub struct Ext2Fs {
     super_block: Arc<SuperBlock>,
+    cache: Arc<Ext2InodeCache>,
 }
 
 impl Ext2Fs {
@@ -227,12 +228,27 @@ impl Ext2Fs {
     pub fn new() -> Self {
         Self {
             super_block: Arc::new(Self::parse_super_block()),
+            cache: Arc::new(Ext2InodeCache::new()),
         }
     }
 
     pub fn lookup_root(&self) {
         assert!(self.inode_exists(2));
-        self.lookup_node(2);
+        let inode = self.lookup_node(2).unwrap();
+
+        let wrapper = UniqueArc::new(Ext2InodeWrapper {
+            super_block: self.super_block.clone(),
+            inode_cache: self.cache.clone(),
+            number: 2,
+            inode,
+            links: ListLinks::new(),
+        });
+
+        let node = self.cache.insert(wrapper);
+
+        let mut list = List::new();
+        let _ = node.list_directory(&mut list);
+        assert!(list.is_empty());
     }
 
     fn inode_exists(&self, inode: u32) -> bool {
@@ -368,52 +384,109 @@ impl<'a> Ext2InodeCursor<'a> {
     }
 }
 
-struct Ext2InodeWrapper {
-    super_block: Arc<SuperBlock>,
-    inode: Ext2Inode,
+struct Ext2InodeCache {
+    cache: Mutex<List<Ext2InodeWrapper>>,
 }
 
-impl Ext2InodeWrapper {}
-
-impl InodeFileExt for Ext2InodeWrapper {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> usize {
-        let mut cursor = Ext2InodeCursor::new(&self.inode);
-
-        cursor.read(offset, buffer)
-    }
-
-    fn write(&self, _offset: u64, _buffer: &[u8]) {
-        todo!("Read-only right now");
-    }
-}
-
-impl InodeDirectoryExt for Ext2InodeWrapper {
-    fn list_directory(&self, list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<super::Inode>>>) {
-        // TODO
-        let mut offset = 0;
-        let mut dentry_header = [0u8; 8];
-
-        while offset < 1024 {
-            let bytes_read = self.read(offset, &mut dentry_header);
-            let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
-
-            offset += unsafe { (*overlay).rec_len as u64 };
+impl Ext2InodeCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(List::new()),
         }
     }
 
-    fn create_file(&self, name: &str) {
-        todo!()
+    fn lookup(&self, inode_number: u32) -> Option<Arc<Ext2InodeWrapper>> {
+        let cache = self.cache.lock();
+        let mut cursor = cache.cursor();
+
+        while let Some(cached_inode) = cursor.get_arc()
+            && cached_inode.number != inode_number
+        {
+            let _ = cursor.next();
+        }
+
+        cursor.get_arc()
     }
 
-    fn remove_file(&self, name: &str) {
-        todo!()
+    fn insert(&self, inode: impl Into<ListArc<Ext2InodeWrapper, 0>>) -> Arc<Ext2InodeWrapper> {
+        let list_arc = inode.into();
+        let copy = list_arc.clone_arc();
+        self.cache.lock().push_back(list_arc);
+
+        copy
     }
 
-    fn create_directory(&self, name: &str) {
-        todo!()
+    fn remove_inode(&self, inode_number: u32) {
+        let mut cache = self.cache.lock();
+        let mut cursor = cache.cursor_mut();
+
+        while let Some(cached_inode) = cursor.get_arc()
+            && cached_inode.number != inode_number
+        {
+            let _ = cursor.next();
+        }
+
+        if cursor.get().is_some() {
+            cursor.remove();
+        }
+    }
+}
+
+struct Ext2InodeWrapper {
+    super_block: Arc<SuperBlock>,
+    inode_cache: Arc<Ext2InodeCache>,
+    number: u32,
+    inode: Ext2Inode,
+    links: ListLinks,
+}
+
+impl_link!(Ext2InodeWrapper, 0 => links);
+
+impl Ext2InodeWrapper {}
+
+impl Drop for Ext2InodeWrapper {
+    fn drop(&mut self) {
+        self.inode_cache.remove_inode(self.number);
+    }
+}
+
+impl InodeOperations for Ext2InodeWrapper {
+    fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+        let mut cursor = Ext2InodeCursor::new(&self.inode);
+
+        Ok(cursor.read(offset, buffer))
     }
 
-    fn remove_directory(&self, name: &str) {
-        todo!()
+    fn list_directory(
+        &self,
+        _list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<super::Inode>>>,
+    ) -> FsResult<()> {
+        let mut cursor = Ext2InodeCursor::new(&self.inode);
+
+        let mut offset = 0;
+        let mut dentry_header = [0u8; 8];
+
+        let mut name_buffer = [0u8; 32];
+
+        cursor.jump_to(0);
+        while cursor.get_current_block() != 0 {
+            while offset < 1024 {
+                // TODO
+                let _ = cursor.read(offset, &mut dentry_header);
+                let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
+                let name_len = (unsafe { (*overlay).name_len } as usize).min(32);
+
+                cursor.read(offset + 8, &mut name_buffer[..name_len]);
+
+                let name = str::from_utf8(&name_buffer[..name_len]).unwrap();
+                printk!("File with name {} found.\n", name);
+
+                offset += unsafe { (*overlay).rec_len as u64 };
+            }
+
+            cursor.next_block();
+        }
+
+        Ok(())
     }
 }
