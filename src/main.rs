@@ -152,7 +152,7 @@ pub fn threaded_init(_arg: *mut ()) {
                     let str = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
                     printk!("{}\n", &str);
 
-                    let new_str = "Hello from myos!\n";
+                    let new_str = "Hello from linux!\n";
 
                     node.write(0, new_str.as_bytes()).unwrap();
                 }
