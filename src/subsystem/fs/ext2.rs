@@ -3,8 +3,8 @@
 use crate::{
     impl_link,
     sched::Mutex,
-    subsystem::{FsResult, Inode, InodeOperations, block_cache},
-    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, UniqueArc},
+    subsystem::{FileSystem, FsResult, Inode, InodeOperations, block_cache},
+    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
 };
 
 use super::FsError;
@@ -249,6 +249,7 @@ impl Ext2Fs {
         }
     }
 
+    /// Reads the ext2 inode from the fs.
     fn lookup_node(&self, inode: u32) -> Option<Ext2Inode> {
         let mut block_buffer: UniqueArc<[u8; 1024]> = UniqueArc::zeroed();
 
@@ -269,6 +270,157 @@ impl Ext2Fs {
 
         let inode = (*block_buffer).as_ptr() as *const Ext2Inode;
         Some(unsafe { inode.read() })
+    }
+}
+
+impl FileSystem for Ext2Fs {
+    fn root(&self) -> Arc<Inode> {
+        let node = self.cache.lookup_or_create(2).unwrap();
+
+        Arc::new(Inode::new(node))
+    }
+}
+
+struct Ext2InodeWriteCursor<'a> {
+    inode_number: u32,
+    inode: &'a mut Ext2Inode,
+    /// Inode cache used for data block allocation.
+    cache: &'a Ext2InodeCache,
+    /// Which block we're reading right now.
+    block: u32,
+    /// Offset within the 15 block top level list
+    top_offset: u32,
+    // Block offset within block 14's singly linked list
+    l1_offset: u32,
+    // Block offsets within block 15's doubly linked list
+    l2_offsets: [u32; 2],
+}
+
+impl<'a> Ext2InodeWriteCursor<'a> {
+    pub fn new(inode_number: u32, inode: &'a mut Ext2Inode, cache: &'a Ext2InodeCache) -> Self {
+        Self {
+            inode_number,
+            inode,
+            cache,
+            block: 0,
+            top_offset: 0,
+            l1_offset: 0,
+            l2_offsets: [0; 2],
+        }
+    }
+
+    /// Jumps the cursor to the start of the blockth block.
+    fn jump_to(&mut self, block: u32) {
+        const ASSUMED_BLOCK_SIZE: u32 = 1024;
+        const BYTES_FOR_BLOCK: u32 = 4;
+        const POINTERS_PER_BLOCK: u32 = ASSUMED_BLOCK_SIZE / BYTES_FOR_BLOCK;
+
+        if block < 13 {
+            self.top_offset = block;
+            self.l1_offset = 0;
+            self.l2_offsets = [0; 2];
+        } else if block - 13 < POINTERS_PER_BLOCK {
+            self.top_offset = 13;
+            self.l1_offset = block - 13;
+            self.l2_offsets = [0; 2];
+        } else {
+            let l2_index = block - POINTERS_PER_BLOCK - 13;
+            self.top_offset = 14;
+            self.l1_offset = 0;
+            let upper_l2_offset = l2_index / POINTERS_PER_BLOCK;
+            let lower_l2_offset = l2_index % POINTERS_PER_BLOCK;
+            self.l2_offsets = [upper_l2_offset, lower_l2_offset];
+        }
+    }
+
+    /// Moves the cursor to the start of the next data block in the file.
+    fn next_block(&mut self) {
+        self.jump_to(self.block + 1);
+    }
+
+    /// Gets the data block this cursor is currently pointed at.
+    fn get_current_block(&self) -> u32 {
+        let mut buf = [0u8; 4];
+
+        let top_level_block = self.inode.block[self.top_offset as usize];
+
+        if self.top_offset < 13 {
+            top_level_block
+        } else if self.top_offset == 14 {
+            block_cache().read(top_level_block as usize * 1024, &mut buf);
+            u32::from_le_bytes(buf)
+        } else {
+            block_cache().read(top_level_block as usize * 1024, &mut buf);
+            let next_level_block = u32::from_le_bytes(buf);
+            block_cache().read(next_level_block as usize * 1024, &mut buf);
+            u32::from_le_bytes(buf)
+        }
+    }
+
+    /// Allocates a free data block and updates the inode to point to it.
+    fn allocate_for_current_block(&mut self) -> u32 {
+        let allocated = self.cache.allocate_data_block(self.inode_number);
+
+        let mut buf = [0u8; 4];
+
+        if self.top_offset < 13 {
+            // Update the block pointer directly in the inode, then flush
+            self.inode.block[self.top_offset as usize] = allocated;
+            self.cache.write_node(self.inode_number, self.inode);
+        } else if self.top_offset == 14 {
+            // Fetch the offset within the linked list to update
+            let single_linked_block = self.inode.block[self.top_offset as usize];
+            let offset_within = self.l1_offset * 4;
+
+            // Update that block pointer only.
+            block_cache().write(
+                (single_linked_block * 1024 + offset_within) as usize,
+                &allocated.to_le_bytes(),
+            );
+        } else {
+            // Find which linked list to look into
+            let double_linked_block = self.inode.block[self.top_offset as usize];
+            let offset_within_double = self.l2_offsets[0] * 4;
+            block_cache().read(
+                (double_linked_block * 1024 + offset_within_double) as usize,
+                &mut buf,
+            );
+
+            // Update the appropriate linked list.
+            let single_linked_block = u32::from_le_bytes(buf);
+            let offset_within_single = self.l2_offsets[1] * 4;
+            block_cache().write(
+                (single_linked_block * 1024 + offset_within_single) as usize,
+                &allocated.to_le_bytes(),
+            );
+        }
+        allocated
+    }
+
+    fn write(&mut self, mut offset: u64, buf: &[u8]) -> usize {
+        let mut have_written = 0;
+        while have_written < buf.len() {
+            let block_number = (offset / 1024) as u32;
+            let block_offset = (offset % 1024) as u32;
+            self.jump_to(block_number);
+
+            let mut block = self.get_current_block();
+            if block == 0 {
+                block = self.allocate_for_current_block();
+            }
+
+            let to_read_in_block =
+                (1024 - block_offset).min(buf.len().saturating_sub(have_written) as u32);
+
+            block_cache().write(
+                (block * 1024 + block_offset) as usize,
+                &buf[(have_written)..(have_written + to_read_in_block as usize)],
+            );
+
+            have_written += to_read_in_block as usize;
+            offset += have_written as u64;
+        }
+        have_written
     }
 }
 
@@ -295,6 +447,7 @@ impl<'a> Ext2InodeCursor<'a> {
         }
     }
 
+    /// Jumps the cursor to the start of the blockth block.
     fn jump_to(&mut self, block: u32) {
         const ASSUMED_BLOCK_SIZE: u32 = 1024;
         const BYTES_FOR_BLOCK: u32 = 4;
@@ -318,10 +471,12 @@ impl<'a> Ext2InodeCursor<'a> {
         }
     }
 
+    /// Moves the cursor to the start of the next data block in the file.
     fn next_block(&mut self) {
         self.jump_to(self.block + 1);
     }
 
+    /// Gets the data block this cursor is currently pointed at.
     fn get_current_block(&self) -> u32 {
         let mut buf = [0u8; 4];
 
@@ -374,6 +529,7 @@ struct Ext2InodeCache {
 }
 
 impl Arc<Ext2InodeCache> {
+    /// Look up the inode in the cache, or load it from the FS if not cached.
     fn lookup_or_create(&self, inode_number: u32) -> FsResult<Arc<Ext2InodeWrapper>> {
         let node = self.lookup(inode_number);
 
@@ -409,7 +565,7 @@ impl Arc<Ext2InodeCache> {
                 super_block: self.super_block.clone(),
                 inode_cache: self.clone(),
                 number: inode_number,
-                ext2_inode: node,
+                ext2_inode: SpinLock::new(node),
                 links: ListLinks::new(),
             });
 
@@ -427,6 +583,7 @@ impl Ext2InodeCache {
         }
     }
 
+    /// Looks up an inode in the cache.
     fn lookup(&self, inode_number: u32) -> Option<Arc<Ext2InodeWrapper>> {
         let cache = self.cache.lock();
         let mut cursor = cache.cursor();
@@ -440,6 +597,7 @@ impl Ext2InodeCache {
         cursor.get_arc()
     }
 
+    /// Inserts a loaded inode into the cache.
     fn insert(&self, inode: impl Into<ListArc<Ext2InodeWrapper, 0>>) -> Arc<Ext2InodeWrapper> {
         let list_arc = inode.into();
         let copy = list_arc.clone_arc();
@@ -448,6 +606,7 @@ impl Ext2InodeCache {
         copy
     }
 
+    /// Removes an inode from the cache.
     fn remove_inode(&self, inode_number: u32) {
         let mut cache = self.cache.lock();
         let mut cursor = cache.cursor_mut();
@@ -463,6 +622,7 @@ impl Ext2InodeCache {
         }
     }
 
+    /// Checks if the inode exists within the file system.
     fn inode_exists(&self, inode: u32) -> bool {
         let group = (inode as u64 - 1) / (self.super_block.inodes_per_group as u64);
         let index = (inode as u64 - 1) % (self.super_block.inodes_per_group as u64);
@@ -480,6 +640,7 @@ impl Ext2InodeCache {
         ((byte[0] >> bit_desired) & 1) != 0
     }
 
+    /// Finds and reserves a data block to be used for a given inode.
     fn allocate_data_block(&self, inode_number: u32) -> u32 {
         let _allocation_lock = self.bitmask_lock.lock();
 
@@ -501,29 +662,123 @@ impl Ext2InodeCache {
 
         let group = (inode_number as u64 - 1) / (self.super_block.inodes_per_group as u64);
 
-        let block_bitmap_first_block = self.super_block.block_bitmap_offset();
-        let block_bitmap_num_blocks = self.super_block.block_bitmap_blocks();
+        let mut rolled_over = false;
+        let mut target_group = group;
 
-        for i in 0..block_bitmap_num_blocks {
-            let current_bitmap_block = block_bitmap_first_block + i;
-            block_cache().read(
-                (current_bitmap_block * self.super_block.block_size()) as usize,
-                &mut block_buffer[..],
-            );
+        while !rolled_over && target_group != group {
+            let block_bitmap_first_block = self.super_block.block_bitmap_offset();
+            let block_bitmap_num_blocks = self.super_block.block_bitmap_blocks();
 
-            if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
-                let block_number = (group * self.super_block.block_size() * 8) as u32 + first_open;
-
-                block_cache().write(
+            for i in 0..block_bitmap_num_blocks {
+                let current_bitmap_block = target_group * self.super_block.blocks_per_group as u64
+                    + block_bitmap_first_block
+                    + i;
+                block_cache().read(
                     (current_bitmap_block * self.super_block.block_size()) as usize,
-                    &block_buffer[..],
+                    &mut block_buffer[..],
                 );
 
-                return block_number;
+                if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
+                    let block_number =
+                        (target_group * self.super_block.block_size() * 8) as u32 + first_open;
+
+                    block_cache().write(
+                        (current_bitmap_block * self.super_block.block_size()) as usize,
+                        &block_buffer[..],
+                    );
+
+                    return block_number;
+                }
+            }
+
+            target_group += 1;
+            if target_group >= self.super_block.group_count() {
+                target_group = 0;
+                rolled_over = true;
             }
         }
 
         0
+    }
+
+    /// Finds and allocates the next available inode. Returns that inode's number.
+    fn allocate_inode_number(&self) -> u32 {
+        let _allocation_lock = self.bitmask_lock.lock();
+
+        fn scan_and_reserve_first_open(block: &mut [u8]) -> Option<u32> {
+            for byte in block {
+                if *byte != 0xFF {
+                    let index = (!*byte).lowest_one().unwrap();
+
+                    *byte |= 1 << index;
+
+                    return Some(index);
+                }
+            }
+
+            None
+        }
+
+        let mut block_buffer: UniqueArc<[u8; 1024]> = UniqueArc::zeroed();
+
+        let group = 0;
+
+        let mut rolled_over = false;
+        let mut target_group = group;
+
+        while !rolled_over && target_group != group {
+            let inode_bitmap_first_block = self.super_block.inode_bitmap_offset();
+            let inode_bitmap_num_blocks = self.super_block.inode_bitmap_blocks();
+
+            for i in 0..inode_bitmap_num_blocks {
+                let current_bitmap_block = target_group * self.super_block.blocks_per_group as u64
+                    + inode_bitmap_first_block
+                    + i;
+                block_cache().read(
+                    (current_bitmap_block * self.super_block.block_size()) as usize,
+                    &mut block_buffer[..],
+                );
+
+                if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
+                    let block_number =
+                        (target_group * self.super_block.block_size() * 8) as u32 + first_open;
+
+                    block_cache().write(
+                        (current_bitmap_block * self.super_block.block_size()) as usize,
+                        &block_buffer[..],
+                    );
+
+                    return block_number;
+                }
+            }
+
+            target_group += 1;
+            if target_group >= self.super_block.group_count() {
+                target_group = 0;
+                rolled_over = true;
+            }
+        }
+
+        0
+    }
+
+    /// Writes the inode reference to the inode number on disk.
+    fn write_node(&self, inode_number: u32, inode: &Ext2Inode) {
+        let group = (inode_number as u64 - 1) / (self.super_block.inodes_per_group as u64);
+        let index = (inode_number as u64 - 1) % (self.super_block.inodes_per_group as u64);
+
+        let first_inode_table_block = group * self.super_block.blocks_per_group as u64
+            + self.super_block.inode_table_offset()
+            + 1;
+
+        let desired_inode_table_offset = first_inode_table_block * self.super_block.block_size()
+            + (index * self.super_block.inode_size as u64);
+
+        let inode_slice = unsafe {
+            core::slice::from_raw_parts((&raw const *inode).cast::<u8>(), size_of_val(inode))
+        };
+
+        block_cache().write(desired_inode_table_offset as usize, inode_slice);
     }
 }
 
@@ -531,7 +786,7 @@ struct Ext2InodeWrapper {
     super_block: Arc<SuperBlock>,
     inode_cache: Arc<Ext2InodeCache>,
     number: u32,
-    ext2_inode: Ext2Inode,
+    ext2_inode: SpinLock<Ext2Inode>,
     links: ListLinks,
 }
 
@@ -547,20 +802,31 @@ impl Drop for Ext2InodeWrapper {
 
 impl InodeOperations for Ext2InodeWrapper {
     fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
-        let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
+        let ext2_inode = self.ext2_inode.lock();
+        let mut cursor = Ext2InodeCursor::new(&ext2_inode);
 
         Ok(cursor.read(offset, buffer))
+    }
+
+    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+        let mut ext2_inode = self.ext2_inode.lock();
+        let mut write_cursor =
+            Ext2InodeWriteCursor::new(self.number, &mut ext2_inode, &self.inode_cache);
+        let _ = write_cursor.write(offset, buffer);
+
+        Ok(())
     }
 
     fn list_directory(
         &self,
         list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<super::Inode>>>,
     ) -> FsResult<()> {
-        if !self.ext2_inode.is_directory() {
+        let ext2_inode = self.ext2_inode.lock();
+        if !ext2_inode.is_directory() {
             return Err(FsError::Unsupported);
         }
 
-        let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
+        let mut cursor = Ext2InodeCursor::new(&ext2_inode);
 
         let mut offset = 0;
         let mut dentry_header = [0u8; 8];
@@ -580,9 +846,19 @@ impl InodeOperations for Ext2InodeWrapper {
 
                     let name = str::from_utf8(&name_buffer[..name_len]).unwrap();
 
+                    if name == "." || name == ".." {
+                        offset += unsafe { (*overlay).rec_len as u64 };
+                        continue;
+                    }
+
                     let child = self.inode_cache.lookup_or_create(inode_number)?;
 
+                    // This smells of deadlock
+                    let file_size = child.ext2_inode.lock().size as u64;
+
                     let fs_inode = Arc::new(Inode::new(child));
+
+                    fs_inode.meta().file_size = file_size;
 
                     fs_inode.meta().set_name(name);
 

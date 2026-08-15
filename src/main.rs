@@ -21,6 +21,7 @@ extern crate alloc;
 
 use core::{
     arch::{asm, global_asm},
+    ffi::CStr,
     panic::PanicInfo,
 };
 
@@ -32,7 +33,7 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::build_kernel_page_table,
+    subsystem::{Ext2Fs, FileSystem, build_kernel_page_table},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -132,6 +133,32 @@ pub fn threaded_init(_arg: *mut ()) {
     DEVICE_BUS.get().unwrap().walk_fdt_root(fdt.root());
 
     printk!("Walked DTS\n");
+
+    let fs = Ext2Fs::new();
+
+    fs.root()
+        .list_directory(|list| {
+            for node in list.cursor() {
+                let meta = node.meta();
+                let name = meta.name();
+
+                if name == "hello.txt" {
+                    printk!("Name: {}\n", name);
+                    drop(meta);
+                    let mut buf = [0u8; 32];
+
+                    node.read(0, &mut buf).unwrap();
+
+                    let str = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
+                    printk!("{}\n", &str);
+
+                    let new_str = "Hello from myos!\n";
+
+                    node.write(0, new_str.as_bytes()).unwrap();
+                }
+            }
+        })
+        .unwrap();
 
     printk!("Kernel initialized\n");
     loop {
