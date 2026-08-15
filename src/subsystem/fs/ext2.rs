@@ -1,7 +1,5 @@
 //! Revision 1 Ext2 FS support (no features supported).
 
-use core::ffi::CStr;
-
 use crate::{
     impl_link,
     sched::Mutex,
@@ -372,6 +370,7 @@ impl<'a> Ext2InodeCursor<'a> {
 struct Ext2InodeCache {
     super_block: Arc<SuperBlock>,
     cache: Mutex<List<Ext2InodeWrapper>>,
+    bitmask_lock: Mutex<()>,
 }
 
 impl Arc<Ext2InodeCache> {
@@ -424,6 +423,7 @@ impl Ext2InodeCache {
         Self {
             super_block,
             cache: Mutex::new(List::new()),
+            bitmask_lock: Mutex::new(()),
         }
     }
 
@@ -479,6 +479,52 @@ impl Ext2InodeCache {
 
         ((byte[0] >> bit_desired) & 1) != 0
     }
+
+    fn allocate_data_block(&self, inode_number: u32) -> u32 {
+        let _allocation_lock = self.bitmask_lock.lock();
+
+        fn scan_and_reserve_first_open(block: &mut [u8]) -> Option<u32> {
+            for byte in block {
+                if *byte != 0xFF {
+                    let index = (!*byte).lowest_one().unwrap();
+
+                    *byte |= 1 << index;
+
+                    return Some(index);
+                }
+            }
+
+            None
+        }
+
+        let mut block_buffer: UniqueArc<[u8; 1024]> = UniqueArc::zeroed();
+
+        let group = (inode_number as u64 - 1) / (self.super_block.inodes_per_group as u64);
+
+        let block_bitmap_first_block = self.super_block.block_bitmap_offset();
+        let block_bitmap_num_blocks = self.super_block.block_bitmap_blocks();
+
+        for i in 0..block_bitmap_num_blocks {
+            let current_bitmap_block = block_bitmap_first_block + i;
+            block_cache().read(
+                (current_bitmap_block * self.super_block.block_size()) as usize,
+                &mut block_buffer[..],
+            );
+
+            if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
+                let block_number = (group * self.super_block.block_size() * 8) as u32 + first_open;
+
+                block_cache().write(
+                    (current_bitmap_block * self.super_block.block_size()) as usize,
+                    &block_buffer[..],
+                );
+
+                return block_number;
+            }
+        }
+
+        0
+    }
 }
 
 struct Ext2InodeWrapper {
@@ -523,7 +569,7 @@ impl InodeOperations for Ext2InodeWrapper {
 
         cursor.jump_to(0);
         while cursor.get_current_block() != 0 {
-            while offset < 1024 {
+            while offset < self.super_block.block_size() {
                 let _ = cursor.read(offset, &mut dentry_header);
                 let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
                 let inode_number = unsafe { (*overlay).inode };

@@ -1,5 +1,6 @@
 use core::{
     alloc::{AllocError, Allocator, Layout},
+    num::NonZero,
     ptr::NonNull,
 };
 
@@ -257,7 +258,9 @@ unsafe impl Allocator for SpinLock<LLAllocator> {
         };
 
         // Replace the allocation header with a hole.
-        let ll_hole: NonNull<LLHole> = ll_header.cast();
+        let ll_hole: NonNull<LLHole> = ll_header
+            .cast()
+            .with_addr(unsafe { NonZero::new_unchecked(ll_header.read().region_start.addr()) });
         unsafe {
             (*ll_hole.as_ptr()).size = hole_size;
             (*ll_hole.as_ptr()).next = core::ptr::null_mut();
