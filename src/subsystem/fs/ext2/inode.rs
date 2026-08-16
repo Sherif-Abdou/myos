@@ -1,5 +1,6 @@
 use crate::{
     impl_link,
+    sched::Mutex,
     subsystem::{
         FsError, FsResult, Inode, InodeOperations,
         fs::ext2::{
@@ -42,6 +43,7 @@ pub struct Ext2InodeWrapper {
     pub(crate) inode_cache: Arc<Ext2InodeCache>,
     pub(crate) number: u32,
     pub(crate) ext2_inode: Ext2Meta,
+    pub(crate) io_lock: Mutex<()>,
     pub(crate) links: ListLinks,
 }
 
@@ -57,12 +59,16 @@ impl Drop for Ext2InodeWrapper {
 
 impl InodeOperations for Ext2InodeWrapper {
     fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+        let _lock = self.io_lock.lock();
+
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
         Ok(cursor.read(offset, buffer))
     }
 
     fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+        let _lock = self.io_lock.lock();
+
         let mut write_cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
         let _ = write_cursor.write(offset, buffer);
@@ -77,6 +83,8 @@ impl InodeOperations for Ext2InodeWrapper {
         if !self.ext2_inode.is_directory() {
             return Err(FsError::Unsupported);
         }
+
+        let _lock = self.io_lock.lock();
 
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
@@ -150,6 +158,48 @@ impl InodeOperations for Ext2InodeWrapper {
         self.inode_cache.write_node(new_inode_number, &inode);
 
         write_cursor.append_dentry(new_inode_number, name);
+
+        Ok(())
+    }
+
+    fn create_directory(&self, name: &str) -> FsResult<()> {
+        let mut write_cursor =
+            Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
+
+        let new_inode_number = self.inode_cache.allocate_inode_number();
+
+        let inode = Ext2Inode {
+            mode: (0x4 << 12) | (0o666),
+            uid: 0,
+            size: 0,
+            atime: 0,
+            ctime: 0,
+            mtime: 0,
+            dtime: 0,
+            gid: 0,
+            links_count: 3,
+            blocks: 2,
+            flags: 0,
+            osd1: 0,
+            block: [0; _],
+            generation: 0,
+            file_acl: 0,
+            dir_acl: 0,
+            faddr: 0,
+            osd2: [0; _],
+        };
+
+        self.inode_cache.write_node(new_inode_number, &inode);
+
+        write_cursor.append_dentry(new_inode_number, name);
+
+        let inode = self.inode_cache.lookup_or_create(new_inode_number)?;
+
+        let mut write_cursor =
+            Ext2InodeWriteCursor::new(inode.number, &inode.ext2_inode, &inode.inode_cache);
+
+        write_cursor.append_dentry(new_inode_number, ".");
+        write_cursor.append_dentry(self.number, "..");
 
         Ok(())
     }

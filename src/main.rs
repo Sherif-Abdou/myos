@@ -21,7 +21,6 @@ extern crate alloc;
 
 use core::{
     arch::{asm, global_asm},
-    ffi::CStr,
     panic::PanicInfo,
 };
 
@@ -35,7 +34,7 @@ use crate::{
     sched::{SCHEDULER, init_scheduler},
     subsystem::{Ext2Fs, FileSystem, build_kernel_page_table},
     timer::ArmTimer,
-    utils::OnceSpinLock,
+    utils::{OnceSpinLock, str_from_cstr},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -44,10 +43,8 @@ global_asm!(include_str!("asm/exception_entry.s"));
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     early_printk!("PANIC\n");
-    if let Some(message) = info.message().as_str() {
-        early_printk!("{}\n", message);
-        printk!("{}\n", message);
-    }
+    early_printk!("{}\n", info.message());
+    printk!("{}\n", info.message());
 
     loop {
         unsafe { asm!("wfe") };
@@ -136,30 +133,17 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let fs = Ext2Fs::new();
 
-    fs.root()
-        .list_directory(|list| {
-            for node in list.cursor() {
-                let meta = node.meta();
-                let name = meta.name();
+    let Ok(hello_file) = fs.open("hello.txt") else {
+        panic!("Could not open file.");
+    };
+    let mut contents = [0u8; 48];
+    let read = hello_file.read(0, &mut contents).unwrap();
 
-                printk!("File name: {}\n", name);
+    let string = str_from_cstr(&contents[..read]);
+    printk!("{}\n", string);
 
-                if name == "newer_file.txt" {
-                    printk!("Name: {}\n", name);
-                    drop(meta);
-                    let mut buf = [0u8; 32];
-
-                    node.read(0, &mut buf).unwrap();
-
-                    let str = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
-                    printk!("{}\n", &str);
-
-                    let new_str = "Hello from myos!\n";
-
-                    node.write(0, new_str.as_bytes()).unwrap();
-                }
-            }
-        })
+    hello_file
+        .write(0, "what on earth are any of you all".as_bytes())
         .unwrap();
 
     printk!("Kernel initialized\n");

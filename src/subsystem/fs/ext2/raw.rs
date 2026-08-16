@@ -200,6 +200,7 @@ impl Ext2Inode {
 ///
 /// Should be 4 byte aligned in storage.
 #[repr(C)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedDirectoryEntryHeader {
     /// Inode number to point to. 0 if unused.
     pub(crate) inode: u32,

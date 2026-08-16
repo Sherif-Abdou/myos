@@ -216,11 +216,11 @@ impl BlockDriver for VirtioBlkDriver {
         output_descriptor[..bytes.len()].copy_from_slice(bytes);
 
         descriptors.idx = (descriptors.idx + 3) % DESCRIPTOR_COUNT;
-        let next_queue_entry = queue.available.idx;
+        let next_queue_entry = queue.available.effective_idx();
 
-        queue.available.ring[next_queue_entry as usize] = info_descriptor_idx as u16;
+        queue.available.ring[next_queue_entry] = info_descriptor_idx as u16;
         fence(core::sync::atomic::Ordering::SeqCst);
-        queue.available.idx += 1;
+        queue.available.inc_idx();
         fence(core::sync::atomic::Ordering::SeqCst);
 
         let used_idx = queue.used.idx;
@@ -266,11 +266,11 @@ impl BlockDriver for VirtioBlkDriver {
         info_descriptor[8..16].copy_from_slice(&(sector.to_le_bytes()));
 
         descriptors.idx = (descriptors.idx + 3) % DESCRIPTOR_COUNT;
-        let next_queue_entry = queue.available.idx;
+        let next_queue_entry = queue.available.effective_idx();
 
-        queue.available.ring[next_queue_entry as usize] = info_descriptor_idx as u16;
+        queue.available.ring[next_queue_entry] = info_descriptor_idx as u16;
         fence(core::sync::atomic::Ordering::SeqCst);
-        queue.available.idx += 1;
+        queue.available.inc_idx();
         fence(core::sync::atomic::Ordering::SeqCst);
 
         let used_idx = queue.used.idx;

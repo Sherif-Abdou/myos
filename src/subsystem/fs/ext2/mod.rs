@@ -2,7 +2,7 @@
 
 use crate::{
     subsystem::{
-        FileSystem, Inode, block_cache,
+        FileSystem, FsError, Inode, block_cache,
         fs::ext2::{
             cache::Ext2InodeCache,
             raw::{Ext2Inode, SuperBlock},
@@ -71,5 +71,77 @@ impl FileSystem for Ext2Fs {
         let node = self.cache.lookup_or_create(2).unwrap();
 
         Arc::new(Inode::new(node))
+    }
+
+    fn create(&self, path: &str) -> super::FsResult<Arc<Inode>> {
+        let parts = path.split("/");
+        let num_parts = path.chars().filter(|c| *c == '/').count();
+
+        let mut current = self.root();
+        for part in parts.take(num_parts - 1) {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor
+                    .get()
+                    .is_some_and(|child| child.meta().name() != part)
+                {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = (*child).clone();
+        }
+
+        let child_to_create = path.split('/').nth(num_parts).unwrap();
+        current.create_file(child_to_create)?;
+
+        current.list_directory(|list| {
+            let mut cursor = list.cursor();
+            while cursor
+                .get()
+                .is_some_and(|child| child.meta().name() != child_to_create)
+            {
+                let _ = cursor.next();
+            }
+
+            cursor
+                .get_arc()
+                .map(|wrapper| (*wrapper).clone())
+                .ok_or(FsError::NoExist)
+        })?
+    }
+
+    fn open(&self, path: &str) -> super::FsResult<Arc<Inode>> {
+        let parts = path.split("/");
+
+        let mut current = self.root();
+        for part in parts {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor
+                    .get()
+                    .is_some_and(|child| child.meta().name() != part)
+                {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = (*child).clone();
+        }
+        Ok(current)
     }
 }

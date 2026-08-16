@@ -56,6 +56,7 @@ impl Arc<Ext2InodeCache> {
             let wrapped = UniqueArc::new(Ext2InodeWrapper {
                 super_block: self.super_block.clone(),
                 inode_cache: self.clone(),
+                io_lock: Mutex::new(()),
                 number: inode_number,
                 ext2_inode: Ext2Meta::from_ext2_inode(&node),
                 links: ListLinks::new(),

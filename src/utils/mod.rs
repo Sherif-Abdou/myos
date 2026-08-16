@@ -4,12 +4,14 @@ mod deque;
 mod intrusive_list;
 mod mmio;
 mod spin_lock;
+mod string;
 
 pub use arc::*;
 pub use core_lock::*;
 pub use intrusive_list::*;
 pub use mmio::Mmio;
 pub use spin_lock::*;
+pub use string::*;
 
 pub const MAX_CPUS: usize = 8;
 

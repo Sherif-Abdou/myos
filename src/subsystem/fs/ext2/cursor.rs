@@ -170,20 +170,25 @@ impl<'a> Ext2InodeWriteCursor<'a> {
     }
 
     pub fn append_dentry(&mut self, child_inode_number: u32, name: &str) {
+        let file_size = *self.inode.size.lock() as u64;
         let mut cursor = Ext2InodeCursor::new(self.inode);
 
         let mut offset = 0;
         let mut latest_rec_len = 0u64;
         let mut dentry_header = [0u8; 8];
+        let mut file_visited = false;
 
         // Traverse the directory entry linked list to find the last node.
         cursor.jump_to(0);
-        while cursor.get_current_block() != 0 {
+        while cursor.get_current_block() != 0 && offset < file_size {
             let mut local_block_offset = 0;
             while local_block_offset < 1024 {
                 let _ = cursor.read(offset, &mut dentry_header);
                 let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
+
                 latest_rec_len = unsafe { (*overlay).rec_len as u64 };
+
+                file_visited = true;
                 offset += latest_rec_len;
                 local_block_offset += latest_rec_len;
             }
@@ -194,52 +199,70 @@ impl<'a> Ext2InodeWriteCursor<'a> {
         let start_of_last_header = offset.saturating_sub(latest_rec_len);
         let within_block_offset = start_of_last_header % 1024;
 
-        let overlay = dentry_header.as_mut_ptr() as *mut LinkedDirectoryEntryHeader;
+        // Special path if this is the first dentry in a directory.
+        if !file_visited {
+            let new_name_len = name.len();
 
-        let current_name_len = unsafe { (*overlay).name_len };
+            let new_header = LinkedDirectoryEntryHeader {
+                inode: child_inode_number,
+                rec_len: 1024,
+                name_len: new_name_len as u8,
+                file_type: 0,
+            };
 
-        let new_name_len = name.len();
+            let new_header_buffer =
+                unsafe { slice::from_raw_parts((&raw const new_header).cast::<u8>(), 8) };
 
-        let necessary_size = new_name_len + 8;
-        // Headers are expected to be four byte aligned.
-        let next_available_offset = align_up(
-            within_block_offset as usize + current_name_len as usize + 8,
-            4,
-        ) as u64;
+            self.write(start_of_last_header, new_header_buffer);
+            self.write(start_of_last_header + 8, name.as_bytes());
+        } else {
+            let overlay = dentry_header.as_mut_ptr() as *mut LinkedDirectoryEntryHeader;
 
-        // We can append the dentry to this block.
-        let next_available_start;
-        let rec_len;
-        if next_available_offset + necessary_size as u64 <= 1024 {
-            next_available_start = align_up(
-                start_of_last_header as usize + current_name_len as usize + 8,
+            let current_name_len = unsafe { (*overlay).name_len };
+
+            let new_name_len = name.len();
+
+            let necessary_size = new_name_len + 8;
+            // Headers are expected to be four byte aligned.
+            let next_available_offset = align_up(
+                within_block_offset as usize + current_name_len as usize + 8,
                 4,
             ) as u64;
-            rec_len = (1024 - next_available_start) as u16;
 
-            let updated_prev_rec_len = (next_available_start - within_block_offset) as u16;
-            self.write(
-                start_of_last_header + 4,
-                &updated_prev_rec_len.to_le_bytes(),
-            );
-        } else {
-            // Append to start of a new block.
-            next_available_start = ((start_of_last_header / 1024) + 1) * 1024;
-            rec_len = 1024;
+            // We can append the dentry to this block.
+            let next_available_start;
+            let rec_len;
+            if next_available_offset + necessary_size as u64 <= 1024 {
+                next_available_start = align_up(
+                    start_of_last_header as usize + current_name_len as usize + 8,
+                    4,
+                ) as u64;
+                rec_len = (1024 - next_available_start) as u16;
+
+                let updated_prev_rec_len = (next_available_start - within_block_offset) as u16;
+                self.write(
+                    start_of_last_header + 4,
+                    &updated_prev_rec_len.to_le_bytes(),
+                );
+            } else {
+                // Append to start of a new block.
+                next_available_start = ((start_of_last_header / 1024) + 1) * 1024;
+                rec_len = 1024;
+            }
+
+            let new_header = LinkedDirectoryEntryHeader {
+                inode: child_inode_number,
+                rec_len,
+                name_len: new_name_len as u8,
+                file_type: 0,
+            };
+
+            let new_header_buffer =
+                unsafe { slice::from_raw_parts((&raw const new_header).cast::<u8>(), 8) };
+
+            self.write(next_available_start, new_header_buffer);
+            self.write(next_available_start + 8, name.as_bytes());
         }
-
-        let new_header = LinkedDirectoryEntryHeader {
-            inode: child_inode_number,
-            rec_len,
-            name_len: new_name_len as u8,
-            file_type: 0,
-        };
-
-        let new_header_buffer =
-            unsafe { slice::from_raw_parts((&raw const new_header).cast::<u8>(), 8) };
-
-        self.write(next_available_start, new_header_buffer);
-        self.write(next_available_start + 8, name.as_bytes());
     }
 }
 
@@ -319,6 +342,12 @@ impl<'a> Ext2InodeCursor<'a> {
     }
 
     pub fn read(&mut self, mut offset: u64, buf: &mut [u8]) -> usize {
+        let file_size = *self.inode.size.lock();
+        let maximum_buf_size = (file_size as usize).saturating_sub(offset as usize);
+        let effective_buf_size = buf.len().min(maximum_buf_size);
+
+        let buf = &mut buf[..effective_buf_size];
+
         let mut have_read = 0;
         while have_read < buf.len() {
             let block_number = (offset / 1024) as u32;

@@ -19,6 +19,16 @@ pub(crate) struct VirtqAvailable<const N: usize> {
 }
 
 impl<const N: usize> VirtqAvailable<N> {
+    fn inc_idx(&mut self) {
+        self.idx += 1;
+    }
+
+    pub fn effective_idx(&self) -> usize {
+        self.idx as usize % N
+    }
+}
+
+impl<const N: usize> VirtqAvailable<N> {
     pub fn addr(&self) -> usize {
         (&raw const *self).addr()
     }
@@ -40,6 +50,10 @@ pub(crate) struct VirtqUsed<const N: usize> {
 impl<const N: usize> VirtqUsed<N> {
     pub fn addr(&self) -> usize {
         (&raw const *self).addr()
+    }
+
+    pub fn effective_idx(&self) -> usize {
+        self.idx as usize % N
     }
 }
 

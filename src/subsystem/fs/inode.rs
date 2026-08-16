@@ -44,6 +44,12 @@ pub trait InodeOperations {
 
         Err(FsError::Unsupported)
     }
+
+    fn create_directory(&self, name: &str) -> FsResult<()> {
+        let _ = name;
+
+        Err(FsError::Unsupported)
+    }
 }
 
 pub struct InodeMeta {
@@ -123,6 +129,10 @@ impl Inode {
 
     pub fn create_file(&self, name: &str) -> FsResult<()> {
         self.operations.lock().create_file(name)
+    }
+
+    pub fn create_directory(&self, name: &str) -> FsResult<()> {
+        self.operations.lock().create_directory(name)
     }
 }
 
