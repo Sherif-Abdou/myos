@@ -142,7 +142,9 @@ pub fn threaded_init(_arg: *mut ()) {
                 let meta = node.meta();
                 let name = meta.name();
 
-                if name == "hello.txt" {
+                printk!("File name: {}\n", name);
+
+                if name == "newer_file.txt" {
                     printk!("Name: {}\n", name);
                     drop(meta);
                     let mut buf = [0u8; 32];
@@ -152,9 +154,10 @@ pub fn threaded_init(_arg: *mut ()) {
                     let str = CStr::from_bytes_until_nul(&buf).unwrap().to_str().unwrap();
                     printk!("{}\n", &str);
 
-                    let new_str = "Hello from linux!\n";
+                    let new_str = "Hello from myos!\n";
 
                     node.write(0, new_str.as_bytes()).unwrap();
+
                 }
             }
         })

@@ -11,18 +11,20 @@ use crate::{
     utils::{Arc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
 };
 
-pub struct Ext2InodeMeta {
+pub struct Ext2Meta {
     pub(crate) mode: SpinLock<u16>,
     pub(crate) size: SpinLock<u32>,
     pub(crate) block: SpinLock<[u32; 15]>,
+    pub(crate) links_count: SpinLock<u16>,
 }
 
-impl Ext2InodeMeta {
+impl Ext2Meta {
     pub fn from_ext2_inode(ext2_inode: &Ext2Inode) -> Self {
         Self {
             mode: SpinLock::new(ext2_inode.mode),
             size: SpinLock::new(ext2_inode.size),
             block: SpinLock::new(ext2_inode.block),
+            links_count: SpinLock::new(ext2_inode.links_count),
         }
     }
 
@@ -39,7 +41,7 @@ pub struct Ext2InodeWrapper {
     pub(crate) super_block: Arc<SuperBlock>,
     pub(crate) inode_cache: Arc<Ext2InodeCache>,
     pub(crate) number: u32,
-    pub(crate) ext2_inode: Ext2InodeMeta,
+    pub(crate) ext2_inode: Ext2Meta,
     pub(crate) links: ListLinks,
 }
 
@@ -98,7 +100,6 @@ impl InodeOperations for Ext2InodeWrapper {
 
                     let child = self.inode_cache.lookup_or_create(inode_number)?;
 
-                    // This smells of deadlock
                     let file_size = *child.ext2_inode.size.lock() as u64;
 
                     let fs_inode = Arc::new(Inode::new(child));
@@ -109,11 +110,46 @@ impl InodeOperations for Ext2InodeWrapper {
 
                     list.push_back(UniqueArc::new(ListLinkWrapper::new(fs_inode)).into());
                 }
-                offset += unsafe { (*overlay).rec_len as u64 };
+                let rec_len = unsafe { (*overlay).rec_len as u64 };
+                offset += rec_len;
             }
 
             cursor.next_block();
         }
+
+        Ok(())
+    }
+
+    fn create_file(&self, name: &str) -> FsResult<()> {
+        let mut write_cursor =
+            Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
+
+        let new_inode_number = self.inode_cache.allocate_inode_number();
+
+        let inode = Ext2Inode {
+            mode: (0x8 << 12) | (0o777),
+            uid: 0,
+            size: 0,
+            atime: 0,
+            ctime: 0,
+            mtime: 0,
+            dtime: 0,
+            gid: 0,
+            links_count: 1,
+            blocks: 2,
+            flags: 0,
+            osd1: 0,
+            block: [0; _],
+            generation: 0,
+            file_acl: 0,
+            dir_acl: 0,
+            faddr: 0,
+            osd2: [0; _],
+        };
+
+        self.inode_cache.write_node(new_inode_number, &inode);
+
+        write_cursor.append_dentry(new_inode_number, name);
 
         Ok(())
     }

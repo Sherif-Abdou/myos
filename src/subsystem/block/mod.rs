@@ -33,6 +33,7 @@ struct BlockSectorEntryInner {
     sector: u64,
     buffer: [u8; BLOCK_SIZE],
     fetch_in_progress: bool,
+    flush_in_progress: bool,
     dirty: bool,
 }
 
@@ -42,6 +43,7 @@ impl BlockSectorEntryInner {
             sector,
             buffer: [0; BLOCK_SIZE],
             fetch_in_progress: false,
+            flush_in_progress: false,
             dirty: false,
         }
     }
@@ -72,6 +74,15 @@ impl BlockSectorEntryInner {
 
     pub fn mark_flushed(&mut self) {
         self.dirty = false;
+        self.flush_in_progress = false;
+    }
+
+    pub fn mark_flush_in_progress(&mut self) {
+        self.flush_in_progress = true;
+    }
+
+    pub fn is_flush_in_progress(&self) -> bool {
+        self.flush_in_progress
     }
 }
 
@@ -270,7 +281,8 @@ impl BlockCache {
         let mut sectors = self.sectors.lock();
         let mut cursor = sectors.cursor_mut();
         while let Some(block) = cursor.get() {
-            if block.lock_inner().dirty {
+            if block.lock_inner().dirty && !block.lock_inner().is_flush_in_progress() {
+                block.lock_inner().mark_flush_in_progress();
                 self.workqueue
                     .enqueue_work(Self::flush_wq_work, Some(cursor.get_arc().unwrap()))
             }

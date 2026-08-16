@@ -1,9 +1,13 @@
 use crate::{
-    sched::Mutex, subsystem::{
-        FsError, FsResult, block_cache, fs::ext2::{
-            inode::{Ext2InodeMeta, Ext2InodeWrapper}, raw::{Ext2Inode, SuperBlock},
+    sched::Mutex,
+    subsystem::{
+        FsError, FsResult, block_cache,
+        fs::ext2::{
+            inode::{Ext2InodeWrapper, Ext2Meta},
+            raw::{Ext2Inode, SuperBlock},
         },
-    }, utils::{Arc, List, ListArc, ListLinks, UniqueArc},
+    },
+    utils::{Arc, List, ListArc, ListLinks, UniqueArc},
 };
 
 pub struct Ext2InodeCache {
@@ -49,7 +53,7 @@ impl Arc<Ext2InodeCache> {
                 super_block: self.super_block.clone(),
                 inode_cache: self.clone(),
                 number: inode_number,
-                ext2_inode: Ext2InodeMeta::from_ext2_inode(&node),
+                ext2_inode: Ext2Meta::from_ext2_inode(&node),
                 links: ListLinks::new(),
             });
 
@@ -129,13 +133,13 @@ impl Ext2InodeCache {
         let _allocation_lock = self.bitmask_lock.lock();
 
         fn scan_and_reserve_first_open(block: &mut [u8]) -> Option<u32> {
-            for byte in block {
+            for (byte_num, byte) in block.iter_mut().enumerate() {
                 if *byte != 0xFF {
                     let index = (!*byte).lowest_one().unwrap();
 
                     *byte |= 1 << index;
 
-                    return Some(index);
+                    return Some(index + byte_num as u32 * 8);
                 }
             }
 
@@ -149,14 +153,15 @@ impl Ext2InodeCache {
         let mut rolled_over = false;
         let mut target_group = group;
 
-        while !rolled_over && target_group != group {
+        while !(rolled_over && target_group == group) {
             let block_bitmap_first_block = self.super_block.block_bitmap_offset();
             let block_bitmap_num_blocks = self.super_block.block_bitmap_blocks();
 
             for i in 0..block_bitmap_num_blocks {
                 let current_bitmap_block = target_group * self.super_block.blocks_per_group as u64
                     + block_bitmap_first_block
-                    + i;
+                    + i
+                    + 1;
                 block_cache().read(
                     (current_bitmap_block * self.super_block.block_size()) as usize,
                     &mut block_buffer[..],
@@ -171,7 +176,7 @@ impl Ext2InodeCache {
                         &block_buffer[..],
                     );
 
-                    return block_number;
+                    return block_number + self.super_block.first_data_block;
                 }
             }
 
@@ -186,17 +191,17 @@ impl Ext2InodeCache {
     }
 
     /// Finds and allocates the next available inode. Returns that inode's number.
-    fn allocate_inode_number(&self) -> u32 {
+    pub fn allocate_inode_number(&self) -> u32 {
         let _allocation_lock = self.bitmask_lock.lock();
 
         fn scan_and_reserve_first_open(block: &mut [u8]) -> Option<u32> {
-            for byte in block {
+            for (byte_num, byte) in block.iter_mut().enumerate() {
                 if *byte != 0xFF {
                     let index = (!*byte).lowest_one().unwrap();
 
                     *byte |= 1 << index;
 
-                    return Some(index);
+                    return Some(index + byte_num as u32 * 8);
                 }
             }
 
@@ -210,29 +215,30 @@ impl Ext2InodeCache {
         let mut rolled_over = false;
         let mut target_group = group;
 
-        while !rolled_over && target_group != group {
+        while !(rolled_over && target_group == group) {
             let inode_bitmap_first_block = self.super_block.inode_bitmap_offset();
             let inode_bitmap_num_blocks = self.super_block.inode_bitmap_blocks();
 
             for i in 0..inode_bitmap_num_blocks {
                 let current_bitmap_block = target_group * self.super_block.blocks_per_group as u64
                     + inode_bitmap_first_block
-                    + i;
+                    + i
+                    + 1;
                 block_cache().read(
                     (current_bitmap_block * self.super_block.block_size()) as usize,
                     &mut block_buffer[..],
                 );
 
                 if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
-                    let block_number =
-                        (target_group * self.super_block.block_size() * 8) as u32 + first_open;
+                    let inode_number =
+                        (target_group * self.super_block.block_size() * 8) as u32 + first_open + 1;
 
                     block_cache().write(
                         (current_bitmap_block * self.super_block.block_size()) as usize,
                         &block_buffer[..],
                     );
 
-                    return block_number;
+                    return inode_number;
                 }
             }
 
