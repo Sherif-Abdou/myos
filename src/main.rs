@@ -95,6 +95,7 @@ extern "C" fn entry() {
             ArmTimer::wait(10_000);
 
             if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
+                SCHEDULER.get().unwrap().flush_kill_queue();
                 *RETURN_TABLE.lock() = Some(new_ret);
             }
         },
@@ -136,14 +137,17 @@ pub fn threaded_init(_arg: *mut ()) {
     let Ok(hello_file) = fs.open("hello.txt") else {
         panic!("Could not open file.");
     };
-    let mut contents = [0u8; 48];
+    let mut contents = [0u8; 64];
     let read = hello_file.read(0, &mut contents).unwrap();
 
     let string = str_from_cstr(&contents[..read]);
     printk!("{}\n", string);
 
     hello_file
-        .write(0, "what on earth are any of you all".as_bytes())
+        .write(
+            0,
+            "I love fortnite, I love fortnite.\0".as_bytes(),
+        )
         .unwrap();
 
     printk!("Kernel initialized\n");
