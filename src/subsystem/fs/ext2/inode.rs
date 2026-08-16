@@ -51,12 +51,6 @@ impl_link!(Ext2InodeWrapper, 0 => links);
 
 impl Ext2InodeWrapper {}
 
-impl Drop for Ext2InodeWrapper {
-    fn drop(&mut self) {
-        self.inode_cache.remove_inode(self.number);
-    }
-}
-
 impl InodeOperations for Ext2InodeWrapper {
     fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
         let _lock = self.io_lock.lock();

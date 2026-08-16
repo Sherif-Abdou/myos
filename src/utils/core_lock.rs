@@ -21,6 +21,7 @@ pub fn with_core_critical_section<R, F: FnOnce() -> R>(f: F) -> R {
 
     unsafe {
         asm!("mrs {x}, daif", x = out(reg) daif);
+        asm!("msr daifset, #0b0010");
     };
     let r = f();
     unsafe {

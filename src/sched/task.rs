@@ -23,6 +23,7 @@ pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
 
 extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
     f(arg);
+
     SCHEDULER.get().unwrap().end_task();
 
     let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
@@ -78,7 +79,7 @@ extern "C" fn save_callee_regs(dst: *mut u64, new_pc: usize) {
         "stp x26, x27, [x0, #0x40]",
         "stp x28, x29, [x0, #0x50]",
         "mov x29, sp",
-        "stp x2, x29, [x0, #0x60]",
+        "stp x30, x29, [x0, #0x60]",
         "mrs x2, nzcv",
         "mrs x3, daif",
         "orr x2, x2, x3",
@@ -241,14 +242,6 @@ impl Sched {
     }
 
     pub fn next_task(&self) -> Option<*const ExceptionRegisters> {
-        let mut kill_queue = self.kill_queue.lock();
-
-        while !kill_queue.is_empty() {
-            kill_queue.remove_front();
-        }
-
-        drop(kill_queue);
-
         let mut tasks = self.run_queue.lock();
         let task = tasks.remove_front();
 
@@ -267,5 +260,15 @@ impl Sched {
 
             Some(&raw const *scheduled.as_ref().unwrap().registers.lock())
         }
+    }
+
+    pub fn flush_kill_queue(&self) {
+        let mut kill_queue = self.kill_queue.lock();
+
+        while !kill_queue.is_empty() {
+            kill_queue.remove_front();
+        }
+
+        drop(kill_queue);
     }
 }
