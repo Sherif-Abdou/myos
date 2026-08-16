@@ -102,6 +102,10 @@ impl<T: ?Sized> Arc<T> {
     pub unsafe fn as_ptr(&self) -> *const T {
         self.deref()
     }
+
+    pub fn ref_count(&self) -> usize {
+        unsafe { self.inner.as_ref().count.load(SeqCst) }
+    }
 }
 
 unsafe impl<T: ?Sized + Sync> Sync for Arc<T> {}

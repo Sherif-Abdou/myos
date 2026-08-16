@@ -1,3 +1,5 @@
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+
 use crate::{
     sched::Mutex,
     subsystem::{
@@ -13,6 +15,8 @@ use crate::{
 pub struct Ext2InodeCache {
     super_block: Arc<SuperBlock>,
     cache: Mutex<List<Ext2InodeWrapper>>,
+    cache_size: AtomicUsize,
+    reclaim_in_progress: AtomicBool,
     bitmask_lock: Mutex<()>,
 }
 
@@ -66,8 +70,10 @@ impl Ext2InodeCache {
     pub fn new(super_block: Arc<SuperBlock>) -> Self {
         Self {
             super_block,
+            cache_size: AtomicUsize::new(0),
             cache: Mutex::new(List::new()),
             bitmask_lock: Mutex::new(()),
+            reclaim_in_progress: AtomicBool::new(false),
         }
     }
 
@@ -90,6 +96,17 @@ impl Ext2InodeCache {
         let list_arc = inode.into();
         let copy = list_arc.clone_arc();
         self.cache.lock().push_back(list_arc);
+        self.cache_size.fetch_add(1, SeqCst);
+        if self.cache_size.load(SeqCst) > 128
+            && self
+                .reclaim_in_progress
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_ok()
+        {
+            self.reclaim();
+
+            self.reclaim_in_progress.store(false, SeqCst);
+        }
 
         copy
     }
@@ -299,5 +316,24 @@ impl Ext2InodeCache {
         block_cache().write(desired_inode_table_offset as usize, &block_buffer[..]);
 
         ret
+    }
+
+    /// Aggressively tries to reclaim any unused cached inodes.
+    pub fn reclaim(&self) {
+        let mut cache = self.cache.lock();
+        let mut cursor = cache.cursor_mut();
+
+        while let Some(node) = cursor.get_arc() {
+            // One arc lives in the list, the second is the arc we're reading now.
+            //
+            // In this case, we are currently the only users, we can remove this from
+            // the cache.
+            if node.ref_count() == 2 {
+                let _ = cursor.remove();
+                self.cache_size.fetch_sub(1, SeqCst);
+            } else {
+                let _ = cursor.next();
+            }
+        }
     }
 }

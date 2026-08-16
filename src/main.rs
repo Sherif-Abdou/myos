@@ -157,7 +157,6 @@ pub fn threaded_init(_arg: *mut ()) {
                     let new_str = "Hello from myos!\n";
 
                     node.write(0, new_str.as_bytes()).unwrap();
-
                 }
             }
         })
