@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub struct Device {
-    driver: Arc<dyn Driver>,
+    driver: Arc<dyn Driver + Send + Sync>,
     tag: &'static str,
     link: ListLinks,
 }

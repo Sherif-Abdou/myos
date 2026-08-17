@@ -12,13 +12,13 @@ pub trait BlockDriver {
     fn write_sector(&self, sector: u64, buf: &[u8]);
 }
 
-static DISK: OnceSpinLock<Arc<dyn BlockDriver + Sync + 'static>> = OnceSpinLock::new();
+static DISK: OnceSpinLock<Arc<dyn BlockDriver + Send + Sync + 'static>> = OnceSpinLock::new();
 
 static BLOCK_CACHE: OnceSpinLock<BlockCache> = OnceSpinLock::new();
 
 const MAX_CACHE_SIZE: usize = 1024 * 64;
 
-pub fn set_disk(disk: Arc<dyn BlockDriver + Sync + 'static>) {
+pub fn set_disk(disk: Arc<dyn BlockDriver + Send + Sync + 'static>) {
     let _ = DISK.set(disk);
     let _ = BLOCK_CACHE.set(BlockCache::new());
 }
@@ -148,10 +148,13 @@ impl BlockCache {
         entry.wait_queue.unblock_all();
     }
 
-    fn fetch_block(&self, block_sector: u64) -> Arc<BlockSectorEntry> {
+    fn fetch_block(
+        &self,
+        mut sectors: MutexGuard<'_, List<BlockSectorEntry>>,
+        block_sector: u64,
+    ) -> Arc<BlockSectorEntry> {
         let block_entry = UniqueArc::new(BlockSectorEntry::new(block_sector));
 
-        let mut sectors = self.sectors.lock();
         let mut sector_cursor = sectors.cursor_mut();
         while sector_cursor
             .get()
@@ -207,8 +210,7 @@ impl BlockCache {
             let sector = Self::wait_for_fetch(sector);
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
         } else {
-            drop(sectors);
-            let sector = self.fetch_block(block);
+            let sector = self.fetch_block(sectors, block);
             let sector = sector.lock_inner();
             buf.copy_from_slice(&sector.buffer[block_offset..(block_offset + len)]);
         }
@@ -252,8 +254,7 @@ impl BlockCache {
                 sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);
             });
         } else {
-            drop(sectors);
-            let sector = self.fetch_block(block);
+            let sector = self.fetch_block(sectors, block);
             let mut sector = sector.lock_inner();
             sector.modify_block(|sector_buffer| {
                 sector_buffer[block_offset..(block_offset + len)].copy_from_slice(buf);

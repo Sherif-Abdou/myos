@@ -127,6 +127,8 @@ pub struct LLAllocator {
     stats: LLStatistics,
 }
 
+unsafe impl Send for LLAllocator {}
+
 impl LLAllocator {
     pub const fn new() -> Self {
         Self {

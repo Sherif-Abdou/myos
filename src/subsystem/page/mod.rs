@@ -201,7 +201,7 @@ impl ArmPageDescriptor {
 
     pub const fn set_attr_group(&mut self, group: u64) {
         self.0 &= !ATTR_INDX_MASK;
-        self.0 |= (group << ATTR_INDX_OFFSET) & ATTR_INDX_OFFSET;
+        self.0 |= (group << ATTR_INDX_OFFSET) & ATTR_INDX_MASK;
     }
 
     pub fn break_before_make(&mut self, func: impl FnOnce(ArmPageDescriptor) -> ArmPageDescriptor) {

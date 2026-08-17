@@ -144,10 +144,7 @@ pub fn threaded_init(_arg: *mut ()) {
     printk!("{}\n", string);
 
     hello_file
-        .write(
-            0,
-            "I love fortnite, I love fortnite.\0".as_bytes(),
-        )
+        .write(0, "I love fortnite, I love fortnite.\0".as_bytes())
         .unwrap();
 
     printk!("Kernel initialized\n");
