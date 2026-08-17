@@ -9,6 +9,7 @@ mod allocators;
 mod arm_pl;
 mod driver;
 mod dtb;
+mod elf;
 mod interrupts;
 mod linker_symbols;
 mod memory;
