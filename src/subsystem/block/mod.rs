@@ -186,8 +186,7 @@ impl BlockCache {
         loop {
             let waitqueue = &sector.wait_queue;
             let sector = sector.lock_inner();
-            if sector.fetch_in_progress {
-                waitqueue.enqueue();
+            if waitqueue.prepare_enqueue(|| sector.fetch_in_progress) {
                 drop(sector);
                 waitqueue.block();
             } else {

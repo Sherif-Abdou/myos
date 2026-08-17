@@ -50,7 +50,7 @@ impl<'a> Ext2InodeCursor<'a> {
             self.l2_offsets = [0; 2];
         } else if block - 12 < POINTERS_PER_BLOCK {
             self.top_offset = 12;
-            self.l1_offset = block - 13;
+            self.l1_offset = block - 12;
             self.l2_offsets = [0; 2];
         } else if block - 12 < (POINTERS_PER_BLOCK + 1) * POINTERS_PER_BLOCK {
             let l2_index = block - POINTERS_PER_BLOCK - 12;
@@ -234,7 +234,7 @@ impl<'a> Ext2InodeWriteCursor<'a> {
 
             // Find which linked list to look into
             let double_linked_block = u32::from_le_bytes(buf);
-            let offset_within_double = self.inner.l3_offsets[0] * 4;
+            let offset_within_double = self.inner.l3_offsets[1] * 4;
             block_cache().read(
                 (double_linked_block * 1024 + offset_within_double) as usize,
                 &mut buf,

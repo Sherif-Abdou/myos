@@ -1,8 +1,8 @@
 build/
 
 *.dtb
-
 *.qcow2
+*.img
 *.dts
 
 # Added by cargo

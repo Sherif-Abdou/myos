@@ -85,11 +85,16 @@ impl Pl {
 impl ConsoleDriver for Pl {
     fn write_bytes(&self, buf: &[u8]) {
         for c in buf {
-            while unsafe { self.regs.read_u16(UARTFR) } & (1 << 5) != 0 {
-                if can_block() {
-                    self.wait_queue.enqueue_and_block();
-                    self.enable_tx_irq();
-                } else {
+            if can_block() {
+                self.enable_tx_irq();
+                while self
+                    .wait_queue
+                    .prepare_enqueue(|| unsafe { self.regs.read_u16(UARTFR) } & (1 << 5) != 0)
+                {
+                    self.wait_queue.block();
+                }
+            } else {
+                while unsafe { self.regs.read_u16(UARTFR) } & (1 << 5) != 0 {
                     core::hint::spin_loop();
                 }
             }

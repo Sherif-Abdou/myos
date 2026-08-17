@@ -122,7 +122,7 @@ impl<T: ?Sized> Deref for Arc<T> {
 impl<T: ?Sized> Drop for Arc<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.inner.as_ref() };
-        let layout = Layout::for_value(&inner.inner);
+        let layout = Layout::for_value(inner);
         if inner.count.fetch_sub(1, SeqCst) == 1 {
             unsafe { drop_in_place(self.inner.as_ptr()) };
             unsafe { KERNEL_ALLOCATOR.deallocate(self.inner.cast(), layout) };

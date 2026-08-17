@@ -18,7 +18,7 @@ pub static IRQ_TABLE: SpinLock<IrqTable> = SpinLock::new(IrqTable {
 static IRQ_BOOL: AtomicBool = AtomicBool::new(false);
 
 pub fn can_block() -> bool {
-    IRQ_BOOL.load(SeqCst)
+    !IRQ_BOOL.load(SeqCst)
 }
 
 pub struct IrqContext<'a> {
