@@ -144,6 +144,10 @@ pub fn threaded_init(_arg: *mut ()) {
     let string = str_from_cstr(&contents[..read]);
     printk!("{}\n", string);
 
+    static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
+
+    printk!("Elf file size: {}\n", ELF_FILE.len());
+
     hello_file
         .write(0, "I love fortnite, I love fortnite.\0".as_bytes())
         .unwrap();
@@ -155,3 +159,4 @@ pub fn threaded_init(_arg: *mut ()) {
         }
     }
 }
+

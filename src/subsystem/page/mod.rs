@@ -281,6 +281,19 @@ impl ArmPageTableRoot {
         Self { root_group: group }
     }
 
+    pub fn create_user() -> Self {
+        let mut group = ArmDescriptorGroupManager::new(0, PageLayer::First);
+
+        for descriptor in unsafe { group.descriptors.as_mut().0.iter_mut() } {
+            descriptor.set_attr_group(0);
+            descriptor.set_af(false);
+            descriptor.set_page_descriptor(false);
+            descriptor.set_valid(true);
+        }
+
+        Self { root_group: group }
+    }
+
     /// Gets the descriptor for a particular vma, at the Layer 3 portion of the page.
     ///
     /// Makes the layers if needed.
@@ -310,6 +323,19 @@ impl ArmPageTableRoot {
         }
     }
 
+    pub fn map_page_range(&self, virtual_addr: usize, phys_addr: usize, page_count: usize) {
+        assert!(phys_addr.is_multiple_of(4096));
+
+        for page in 0..page_count {
+            let virtual_addr = virtual_addr + 4096 * page;
+            let phys_addr = phys_addr + 4096 * page;
+
+            let (descriptor, index) = self.descriptor_for_vma(virtual_addr);
+
+            descriptor.map_page(index, phys_addr);
+        }
+    }
+
     /// Binds this page table as the kernel page table. This should really only be called once.
     pub fn bind_kernel(&self) {
         with_core_critical_section(|| {
@@ -322,6 +348,27 @@ impl ArmPageTableRoot {
             dsb ish
             isb
             msr ttbr1_el1, {0}
+            isb
+            tlbi vmalle1is
+            dsb ish
+            isb
+            "#, in(reg) (phys_addr));
+            }
+        });
+    }
+
+    /// Binds this page table as the kernel page table. This should really only be called once.
+    pub fn bind_user(&self) {
+        with_core_critical_section(|| {
+            let phys_addr = self.root_group.descriptors.addr().get() & 0x7fffffffff;
+
+            unsafe {
+                asm!(r#"
+            isb
+            tlbi vmalle1is
+            dsb ish
+            isb
+            msr ttbr0_el1, {0}
             isb
             tlbi vmalle1is
             dsb ish
@@ -351,6 +398,8 @@ pub struct ArmDescriptorGroupManager {
     layer: SpinLock<PageLayer>,
     links: ListLinks,
 }
+
+unsafe impl Send for ArmDescriptorGroupManager {}
 
 unsafe impl Sync for ArmDescriptorGroupManager {}
 

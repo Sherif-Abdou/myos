@@ -1,9 +1,14 @@
-use core::arch::{asm, naked_asm};
+use core::{
+    arch::{asm, naked_asm},
+    num,
+};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR},
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec},
+    elf::{ElfParser, Segment},
     impl_link,
     interrupts::{ExceptionRegisters, daifclr, daifset},
+    subsystem::ArmPageTableRoot,
     utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
 };
 
@@ -12,11 +17,18 @@ const STACK_SIZE: usize = 4096 * 16;
 #[repr(align(16))]
 struct TaskStack([u8; STACK_SIZE]);
 
+pub struct UserSpaceTaskInfo {
+    page_table: SpinLock<ArmPageTableRoot>,
+    elf: KBox<[u8]>,
+    segments: KVec<Segment>,
+}
+
 #[repr(align(16))]
 pub struct Task {
     registers: SpinLock<ExceptionRegisters>,
     links: ListLinks,
     stack: KBox<TaskStack>,
+    userspace: Option<Arc<UserSpaceTaskInfo>>,
 }
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
@@ -193,6 +205,7 @@ impl Sched {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
             stack: create_stack(),
+            userspace: None,
         });
 
         let mut registers = task.registers.lock();
@@ -210,12 +223,26 @@ impl Sched {
         self.run_queue.lock().push_back(task.into());
     }
 
+    pub fn load_program(elf: KBox<[u8]>) {
+        let parser = ElfParser::new(&elf);
+
+        let num_segments = parser.num_segments();
+
+        let mut segments = kvec();
+
+        for index in 0..num_segments {
+            let segment = parser.segment(index);
+            segments.push(segment);
+        }
+    }
+
     #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
     pub fn idle_task_from_fn(&self, f: fn(*mut ()), arg: *mut ()) {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
             stack: create_stack(),
+            userspace: None,
         });
 
         let mut registers = task.registers.lock();
