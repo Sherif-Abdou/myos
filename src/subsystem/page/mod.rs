@@ -204,6 +204,24 @@ impl ArmPageDescriptor {
         self.0 |= (group << ATTR_INDX_OFFSET) & ATTR_INDX_MASK;
     }
 
+    pub const fn get_ap1(&self) -> u64 {
+        (self.0 & AP1_MASK) >> AP1_OFFSET
+    }
+
+    pub const fn get_ap2(&self) -> u64 {
+        (self.0 & AP2_MASK) >> AP2_OFFSET
+    }
+
+    pub const fn set_ap1(&mut self, ap: u64) {
+        self.0 &= !AP1_MASK;
+        self.0 |= (ap << AP1_OFFSET) & AP1_MASK;
+    }
+
+    pub const fn set_ap2(&mut self, ap: u64) {
+        self.0 &= !AP2_MASK;
+        self.0 |= (ap << AP2_OFFSET) & AP2_MASK;
+    }
+
     pub fn break_before_make(&mut self, func: impl FnOnce(ArmPageDescriptor) -> ArmPageDescriptor) {
         with_core_critical_section(|| {
             let new_descriptor = func(*self);
@@ -290,6 +308,7 @@ impl ArmPageTableRoot {
 
         for descriptor in unsafe { group.descriptors.as_mut().0.iter_mut() } {
             descriptor.set_attr_group(0);
+            descriptor.set_ap1(1);
             descriptor.set_af(false);
             descriptor.set_page_descriptor(false);
             descriptor.set_valid(true);
@@ -453,6 +472,8 @@ impl ArmDescriptorGroupManager {
         {
             new_descriptor.set_phys_address(phys_addr + i * region_size);
             new_descriptor.set_af(descriptor.af());
+            new_descriptor.set_ap1(descriptor.get_ap1());
+            new_descriptor.set_ap2(descriptor.get_ap2());
             new_descriptor.set_page_descriptor(next_layer.is_lowest_layer());
             new_descriptor.set_valid(descriptor.valid());
         }

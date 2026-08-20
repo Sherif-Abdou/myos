@@ -8,6 +8,7 @@ use crate::{
     printk,
     subsystem::ArmPageTableRoot,
     utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
+    write_sysreg,
 };
 
 const STACK_SIZE: usize = 4096 * 16;
@@ -24,8 +25,16 @@ pub struct UserSpaceTaskInfo {
 pub struct Task {
     registers: SpinLock<ExceptionRegisters>,
     links: ListLinks,
-    stack: KBox<TaskStack>,
+    // For userspace threads, used only for exception handling.
+    // For kernelspace threads, this is also their stack.
+    kernel_stack: KBox<TaskStack>,
     userspace: Option<Arc<UserSpaceTaskInfo>>,
+}
+
+impl Task {
+    pub fn kernel_stack_bottom(&self) -> u64 {
+        self.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+    }
 }
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
@@ -201,7 +210,7 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            stack: create_stack(),
+            kernel_stack: create_stack(),
             userspace: None,
         });
 
@@ -209,7 +218,7 @@ impl Sched {
         registers.elr = (thread_wrapper) as u64;
         registers.gprs[0] = (f as usize) as u64;
         registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        registers.gprs[31] = task.kernel_stack_bottom();
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
@@ -249,19 +258,19 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            stack: create_stack(),
+            kernel_stack: create_stack(),
             userspace: Some(Arc::new(userspace)),
         });
 
         let mut registers = task.registers.lock();
         registers.elr = parser.entry_vma() as u64;
         registers.gprs[0] = 27;
-        registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        registers.gprs[31] = task.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
         );
-        registers.spsr = 0b0101;
+        registers.spsr = 0b0000;
         drop(registers);
 
         self.run_queue.lock().push_back(task.into());
@@ -272,7 +281,7 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            stack: create_stack(),
+            kernel_stack: create_stack(),
             userspace: None,
         });
 
@@ -280,7 +289,7 @@ impl Sched {
         registers.elr = (thread_wrapper) as u64;
         registers.gprs[0] = (f as usize) as u64;
         registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        registers.gprs[31] = task.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
@@ -308,7 +317,12 @@ impl Sched {
 
             if let Some(ref userspace) = task.userspace {
                 userspace.page_table.lock().bind_user();
+
+                // unsafe {
+                //     write_sysreg!(SP_EL1, task.kernel_stack_bottom());
+                // }
             }
+
             *scheduled = Some(task.clone_arc());
 
             tasks.push_back(task);
