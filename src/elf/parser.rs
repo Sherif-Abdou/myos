@@ -3,8 +3,7 @@ use core::{alloc::Layout, ptr::NonNull};
 use alloc::alloc::Allocator;
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR},
-    elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
+    allocators::{KBox, KERNEL_ALLOCATOR, align_up}, elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
 };
 
 pub trait ElfSource {
@@ -55,12 +54,18 @@ impl SegmentType {
     }
 
     pub fn load_from_source(header: &ProgramHeader, reader: impl ElfSource) -> Self {
+        let front_padding = header.vaddr % 4096;
+
+        let buffer_len = align_up(front_padding + header.filesz, 4096);
         let mut allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
-            .allocate_zeroed(Self::layout(header.filesz))
+            .allocate_zeroed(Self::layout(buffer_len))
             .unwrap();
         let buf = unsafe { allocated.as_mut() };
 
-        reader.read(header.offset, buf);
+        reader.read(
+            header.offset,
+            &mut buf[front_padding..(front_padding + header.filesz)],
+        );
 
         Self::Loaded(allocated)
     }
@@ -102,6 +107,7 @@ impl SegmentPermissions {
 
 pub struct Segment {
     blob: SegmentType,
+    vaddr: usize,
     memsz: usize,
     filesz: usize,
     permissions: SegmentPermissions,
@@ -112,7 +118,19 @@ impl Segment {
         matches!(self.blob, SegmentType::Null)
     }
 
-    pub fn phys_addr(&self) -> usize {
+    pub fn virt_addr(&self) -> usize {
+        self.vaddr
+    }
+
+    pub fn mem_size(&self) -> usize {
+        self.memsz
+    }
+
+    pub fn mem_page_count(&self) -> usize {
+        self.mem_size().div_ceil(4096)
+    }
+
+    pub fn loaded_phys_addr(&self) -> usize {
         let SegmentType::Loaded(ref ptr) = self.blob else {
             todo!("Only support phys addr of loaded segment.")
         };
@@ -133,6 +151,10 @@ impl<S: ElfSource> ElfParser<S> {
 
     fn elf_header(&self) -> &ElfHeader {
         &self.header
+    }
+
+    pub fn entry_vma(&self) -> usize {
+        self.elf_header().entry
     }
 
     fn num_program_headers(&self) -> u16 {
@@ -158,36 +180,28 @@ impl<S: ElfSource> ElfParser<S> {
 
     pub fn segment(&self, index: usize) -> Segment {
         let header = self.program_header(index);
+        let blob;
         if header.segment_type == 1 {
             let mem_len = header.memsz;
             let disk_len = header.filesz;
 
             if mem_len == 0 {
-                Segment {
-                    blob: SegmentType::Zeroed(mem_len),
-                    memsz: header.memsz,
-                    filesz: header.filesz,
-                    permissions: SegmentPermissions::from_header(&header),
-                }
+                blob = SegmentType::Zeroed(mem_len);
             } else if disk_len == mem_len {
-                let segment_buffer = SegmentType::load_from_source(&header, &self.source);
-
-                Segment {
-                    blob: segment_buffer,
-                    memsz: header.memsz,
-                    filesz: header.filesz,
-                    permissions: SegmentPermissions::from_header(&header),
-                }
+                blob = SegmentType::load_from_source(&header, &self.source);
             } else {
                 panic!("Cannot handle segment #{}", index);
             }
         } else {
-            Segment {
-                blob: SegmentType::Null,
-                memsz: header.memsz,
-                filesz: header.filesz,
-                permissions: SegmentPermissions::from_header(&header),
-            }
+            blob = SegmentType::Null;
+        }
+
+        Segment {
+            blob,
+            vaddr: header.vaddr,
+            memsz: header.memsz,
+            filesz: header.filesz,
+            permissions: SegmentPermissions::from_header(&header),
         }
     }
 

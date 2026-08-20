@@ -257,6 +257,7 @@ const KERNEL_START_VIRT_ADDR: usize = !0x7fffffffff;
 
 pub struct ArmPageTableRoot {
     root_group: ArmDescriptorGroupManager,
+    vma_offset: usize,
 }
 
 impl ArmPageTableRoot {
@@ -278,7 +279,7 @@ impl ArmPageTableRoot {
             descriptor.set_valid(accessible);
         }
 
-        Self { root_group: group }
+        Self { root_group: group, vma_offset: KERNEL_START_VIRT_ADDR }
     }
 
     pub fn create_user() -> Self {
@@ -291,15 +292,15 @@ impl ArmPageTableRoot {
             descriptor.set_valid(true);
         }
 
-        Self { root_group: group }
+        Self { root_group: group, vma_offset: 0 }
     }
 
     /// Gets the descriptor for a particular vma, at the Layer 3 portion of the page.
     ///
     /// Makes the layers if needed.
     pub fn descriptor_for_vma(&self, addr: usize) -> (Arc<ArmDescriptorGroupManager>, usize) {
-        assert!(addr >= KERNEL_START_VIRT_ADDR);
-        let relative_addr = addr - KERNEL_START_VIRT_ADDR;
+        assert!(addr >= self.vma_offset);
+        let relative_addr = addr - self.vma_offset;
 
         let region_size = self.root_group.layer.lock().get_region_size();
         let index = relative_addr / region_size;
@@ -357,7 +358,7 @@ impl ArmPageTableRoot {
         });
     }
 
-    /// Binds this page table as the kernel page table. This should really only be called once.
+    /// Binds this page table as the userspace page table.
     pub fn bind_user(&self) {
         with_core_critical_section(|| {
             let phys_addr = self.root_group.descriptors.addr().get() & 0x7fffffffff;

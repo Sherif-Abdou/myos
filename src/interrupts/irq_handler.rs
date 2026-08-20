@@ -108,8 +108,33 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
         printk!("x29: {:x}\n", (*regs).gprs[29]);
         printk!("x30: {:x}\n", (*regs).gprs[30]);
         printk!("sp: {:x}\n", (*regs).gprs[31]);
-        printk!("sp: {:x}\n", (*regs).gprs[31]);
     }
+    let ec =(esr >> 26) & 0x3f;
+
+    match ec {
+        0x1  => {
+            printk!("Trapped WF* Instruction\n");
+        }
+        0x3 => {
+            printk!("Trapped MCR or MRC\n");
+        }
+        0x7 => {
+            printk!("Trapped FPU\n");
+        }
+        0xd => {
+            printk!("Branch target exception\n");
+        }
+        0xe => {
+            printk!("Illegal execution state\n");
+        }
+        0x15 => {
+            printk!("Trapped SVC\n");
+        }
+        _ => {
+            printk!("EC: {:x}\n", ec);
+        }
+    }
+
 
     loop {
         unsafe {

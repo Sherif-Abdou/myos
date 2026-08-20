@@ -32,7 +32,7 @@ use crate::{
     dtb::{Fdt, find_earlyconsole_node},
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
-    sched::{SCHEDULER, init_scheduler},
+    sched::{SCHEDULER, Sched, init_scheduler},
     subsystem::{Ext2Fs, FileSystem, build_kernel_page_table},
     timer::ArmTimer,
     utils::{OnceSpinLock, str_from_cstr},
@@ -135,22 +135,11 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let fs = Ext2Fs::new();
 
-    let Ok(hello_file) = fs.open("hello.txt") else {
-        panic!("Could not open file.");
-    };
-    let mut contents = [0u8; 64];
-    let read = hello_file.read(0, &mut contents).unwrap();
-
-    let string = str_from_cstr(&contents[..read]);
-    printk!("{}\n", string);
-
     static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
 
     printk!("Elf file size: {}\n", ELF_FILE.len());
 
-    hello_file
-        .write(0, "I love fortnite, I love fortnite.\0".as_bytes())
-        .unwrap();
+    SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
     printk!("Kernel initialized\n");
     loop {
@@ -159,4 +148,3 @@ pub fn threaded_init(_arg: *mut ()) {
         }
     }
 }
-

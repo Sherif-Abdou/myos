@@ -1,13 +1,11 @@
-use core::{
-    arch::{asm, naked_asm},
-    num,
-};
+use core::arch::{asm, naked_asm};
 
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec},
     elf::{ElfParser, Segment},
     impl_link,
     interrupts::{ExceptionRegisters, daifclr, daifset},
+    printk,
     subsystem::ArmPageTableRoot,
     utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
 };
@@ -19,7 +17,6 @@ struct TaskStack([u8; STACK_SIZE]);
 
 pub struct UserSpaceTaskInfo {
     page_table: SpinLock<ArmPageTableRoot>,
-    elf: KBox<[u8]>,
     segments: KVec<Segment>,
 }
 
@@ -223,17 +220,51 @@ impl Sched {
         self.run_queue.lock().push_back(task.into());
     }
 
-    pub fn load_program(elf: KBox<[u8]>) {
-        let parser = ElfParser::new(&elf);
+    pub fn load_program(&self, elf: &[u8]) {
+        let parser = ElfParser::new(elf);
 
         let num_segments = parser.num_segments();
 
         let mut segments = kvec();
+        let page_table = ArmPageTableRoot::create_user();
 
         for index in 0..num_segments {
             let segment = parser.segment(index);
-            segments.push(segment);
+            if !segment.is_null() {
+                let phys_addr = segment.loaded_phys_addr();
+                let virt_addr = segment.virt_addr() & !0xfff;
+                let pages = segment.mem_page_count();
+
+                page_table.map_page_range(virt_addr, phys_addr, pages);
+
+                segments.push(segment);
+            }
         }
+
+        let userspace = UserSpaceTaskInfo {
+            page_table: SpinLock::new(page_table),
+            segments,
+        };
+
+        let task = UniqueArc::new(Task {
+            registers: SpinLock::new(ExceptionRegisters::default()),
+            links: ListLinks::new(),
+            stack: create_stack(),
+            userspace: Some(Arc::new(userspace)),
+        });
+
+        let mut registers = task.registers.lock();
+        registers.elr = parser.entry_vma() as u64;
+        registers.gprs[0] = 27;
+        registers.gprs[31] = task.stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        assert!(
+            registers.gprs[31].is_multiple_of(16),
+            "Stack ptr is not aligned"
+        );
+        registers.spsr = 0b0101;
+        drop(registers);
+
+        self.run_queue.lock().push_back(task.into());
     }
 
     #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
@@ -274,6 +305,10 @@ impl Sched {
 
         if let Some(task) = task {
             let mut scheduled = self.scheduled.lock();
+
+            if let Some(ref userspace) = task.userspace {
+                userspace.page_table.lock().bind_user();
+            }
             *scheduled = Some(task.clone_arc());
 
             tasks.push_back(task);
