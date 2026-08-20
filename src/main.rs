@@ -33,9 +33,9 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{Ext2Fs, build_kernel_page_table},
+    subsystem::{Ext2Fs, FileSystem, build_kernel_page_table},
     timer::ArmTimer,
-    utils::OnceSpinLock,
+    utils::{OnceSpinLock, UniqueArc},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -135,9 +135,16 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let fs = Ext2Fs::new();
 
-    static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
+    let exe_file = fs.open("userspace_program").unwrap();
+    let exe_size = exe_file.meta().file_size as usize;
 
-    SCHEDULER.get().unwrap().load_program(ELF_FILE);
+    let mut buf: UniqueArc<[u8; 100_000]> = UniqueArc::zeroed();
+
+    exe_file.read(0, &mut buf[..exe_size]);
+
+    // static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
+
+    SCHEDULER.get().unwrap().load_program(&buf[..exe_size]);
 
     printk!("Kernel initialized\n");
     loop {

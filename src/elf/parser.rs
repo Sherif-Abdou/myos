@@ -36,7 +36,7 @@ pub struct ElfParser<S: ElfSource> {
 
 pub enum SegmentType {
     Loaded(NonNull<[u8]>),
-    Zeroed(usize),
+    Zeroed(NonNull<[u8]>),
     Null,
 }
 
@@ -70,11 +70,43 @@ impl SegmentType {
 
         Self::Loaded(allocated)
     }
+
+    pub fn load_zeroed(header: &ProgramHeader) -> Self {
+        let front_padding = header.vaddr % 4096;
+
+        let buffer_len = align_up(front_padding + header.filesz, 4096);
+        let allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
+            .allocate_zeroed(Self::layout(buffer_len))
+            .unwrap();
+
+        Self::Loaded(allocated)
+    }
+
+    pub fn load_from_zeroed(header: &ProgramHeader, reader: impl ElfSource) -> Self {
+        let front_padding = header.vaddr % 4096;
+
+        let buffer_len = align_up(front_padding + header.filesz, 4096);
+        let mut allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
+            .allocate_zeroed(Self::layout(buffer_len))
+            .unwrap();
+        let buf = unsafe { allocated.as_mut() };
+
+        reader.read(
+            header.offset,
+            &mut buf[front_padding..(front_padding + header.filesz)],
+        );
+
+        Self::Loaded(allocated)
+    }
 }
 
 impl Drop for SegmentType {
     fn drop(&mut self) {
         if let Self::Loaded(segment) = self {
+            unsafe {
+                KERNEL_ALLOCATOR.deallocate(segment.cast(), Self::layout(segment.len()));
+            }
+        } else if let Self::Zeroed(segment) = self {
             unsafe {
                 KERNEL_ALLOCATOR.deallocate(segment.cast(), Self::layout(segment.len()));
             }
@@ -187,7 +219,7 @@ impl<S: ElfSource> ElfParser<S> {
             let disk_len = header.filesz;
 
             if mem_len == 0 {
-                blob = SegmentType::Zeroed(mem_len);
+                blob = SegmentType::load_zeroed(&header);
             } else if disk_len == mem_len {
                 blob = SegmentType::load_from_source(&header, &self.source);
             } else {

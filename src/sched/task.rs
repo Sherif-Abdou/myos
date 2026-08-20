@@ -5,10 +5,8 @@ use crate::{
     elf::{ElfParser, Segment},
     impl_link,
     interrupts::{ExceptionRegisters, daifclr, daifset},
-    printk,
     subsystem::ArmPageTableRoot,
     utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
-    write_sysreg,
 };
 
 const STACK_SIZE: usize = 4096 * 16;
