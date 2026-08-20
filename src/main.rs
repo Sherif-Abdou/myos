@@ -32,10 +32,10 @@ use crate::{
     dtb::{Fdt, find_earlyconsole_node},
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
-    sched::{SCHEDULER, Sched, init_scheduler},
-    subsystem::{Ext2Fs, FileSystem, build_kernel_page_table},
+    sched::{SCHEDULER, init_scheduler},
+    subsystem::{Ext2Fs, build_kernel_page_table},
     timer::ArmTimer,
-    utils::{OnceSpinLock, str_from_cstr},
+    utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -136,8 +136,6 @@ pub fn threaded_init(_arg: *mut ()) {
     let fs = Ext2Fs::new();
 
     static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
-
-    printk!("Elf file size: {}\n", ELF_FILE.len());
 
     SCHEDULER.get().unwrap().load_program(ELF_FILE);
 

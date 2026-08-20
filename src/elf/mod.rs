@@ -1,4 +1,4 @@
-mod raw;
 mod parser;
+mod raw;
 
 pub use parser::*;

@@ -279,7 +279,10 @@ impl ArmPageTableRoot {
             descriptor.set_valid(accessible);
         }
 
-        Self { root_group: group, vma_offset: KERNEL_START_VIRT_ADDR }
+        Self {
+            root_group: group,
+            vma_offset: KERNEL_START_VIRT_ADDR,
+        }
     }
 
     pub fn create_user() -> Self {
@@ -292,7 +295,10 @@ impl ArmPageTableRoot {
             descriptor.set_valid(true);
         }
 
-        Self { root_group: group, vma_offset: 0 }
+        Self {
+            root_group: group,
+            vma_offset: 0,
+        }
     }
 
     /// Gets the descriptor for a particular vma, at the Layer 3 portion of the page.

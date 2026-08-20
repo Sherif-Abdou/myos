@@ -134,17 +134,18 @@ impl<'a> Ext2InodeCursor<'a> {
             self.jump_to(block_number);
 
             let block = self.get_current_block();
-            if block == 0 {
-                return have_read;
-            }
-
             let to_read_in_block =
                 (1024 - block_offset).min(buf.len().saturating_sub(have_read) as u32);
 
-            block_cache().read(
-                (block * 1024 + block_offset) as usize,
-                &mut buf[(have_read)..(have_read + to_read_in_block as usize)],
-            );
+            if block == 0 {
+                // Assume sparse blocks are all zeroes
+                buf[(have_read)..(have_read + to_read_in_block as usize)].fill(0);
+            } else {
+                block_cache().read(
+                    (block * 1024 + block_offset) as usize,
+                    &mut buf[(have_read)..(have_read + to_read_in_block as usize)],
+                );
+            }
 
             have_read += to_read_in_block as usize;
             offset += to_read_in_block as u64;

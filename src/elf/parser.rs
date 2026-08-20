@@ -3,7 +3,8 @@ use core::{alloc::Layout, ptr::NonNull};
 use alloc::alloc::Allocator;
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, align_up}, elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
+    allocators::{KBox, KERNEL_ALLOCATOR, align_up},
+    elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
 };
 
 pub trait ElfSource {

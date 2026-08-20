@@ -109,10 +109,10 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
         printk!("x30: {:x}\n", (*regs).gprs[30]);
         printk!("sp: {:x}\n", (*regs).gprs[31]);
     }
-    let ec =(esr >> 26) & 0x3f;
+    let ec = (esr >> 26) & 0x3f;
 
     match ec {
-        0x1  => {
+        0x1 => {
             printk!("Trapped WF* Instruction\n");
         }
         0x3 => {
@@ -134,7 +134,6 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
             printk!("EC: {:x}\n", ec);
         }
     }
-
 
     loop {
         unsafe {
