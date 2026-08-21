@@ -5,7 +5,7 @@
 .global _sexc_entry
 
 .macro save_regs
-    sub sp, sp, #0x110
+    sub sp, sp, #0x120
     stp x0, x1, [sp]
     stp x2, x3, [sp, #0x10]
     stp x4, x5, [sp, #0x20]
@@ -21,7 +21,7 @@
     stp x24, x25, [sp, #0xc0]
     stp x26, x27, [sp, #0xd0]
     stp x28, x29, [sp, #0xe0]
-    add x29, sp, #0x110
+    add x29, sp, #0x120
     stp x30, x29, [sp, #0xf0]
     mrs x0, elr_el1
     mrs x1, spsr_el1
