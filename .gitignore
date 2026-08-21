@@ -8,3 +8,4 @@ build/
 # Added by cargo
 
 /target
+usr/main

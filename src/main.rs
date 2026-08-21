@@ -135,7 +135,7 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let fs = Ext2Fs::new();
 
-    static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
+    static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 
     SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
