@@ -53,6 +53,8 @@ pub struct ExceptionRegisters {
     pub gprs: [u64; 32],
     pub elr: u64,
     pub spsr: u64,
+    pub sp_el0: u64,
+    pub _pad: u64,
 }
 
 #[unsafe(no_mangle)]
@@ -74,7 +76,7 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
     let ec = (esr >> 26) & 0x3f;
 
     if ec == 0x15 {
-        let call = esr & 0xff;
+        let call = unsafe { (*regs).gprs[8] };
 
         if call == 27 {
             let addr = unsafe { (*regs).gprs[0] } as *mut u8;
@@ -88,9 +90,7 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
         } else if call == 50 {
             SCHEDULER.get().unwrap().end_task();
 
-            let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
-
-            next_task
+            SCHEDULER.get().unwrap().next_task().unwrap()
         } else {
             regs
         }
@@ -128,7 +128,7 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
             printk!("x23: {:x}\n", (*regs).gprs[23]);
             printk!("x24: {:x}\n", (*regs).gprs[24]);
             printk!("x25: {:x}\n", (*regs).gprs[25]);
-            printk!("x26: {:x}\n", (*regs).gprs[26]);
+            printk!("x26: {:x}\n", (*regs).gprs[28]);
             printk!("x27: {:x}\n", (*regs).gprs[27]);
             printk!("x28: {:x}\n", (*regs).gprs[28]);
             printk!("x29: {:x}\n", (*regs).gprs[29]);

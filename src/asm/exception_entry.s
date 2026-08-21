@@ -26,6 +26,9 @@
     mrs x0, elr_el1
     mrs x1, spsr_el1
     stp x0, x1, [sp, #0x100]
+    mrs x0, sp_el0
+    mov x1, #0
+    stp x0, x1, [sp, #0x110]
 
     # Store pointer to register table
     mov x0, sp
@@ -33,6 +36,9 @@
 
 # Not currently safe to be interrupted in this region.
 .macro restore_regs
+    ldp x8, x9, [x0, 0x110]
+    msr sp_el0, x8
+
     ldp x8, x9, [x0, 0x100]
     msr elr_el1, x8
     msr spsr_el1, x9

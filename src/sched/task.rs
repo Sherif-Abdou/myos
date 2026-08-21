@@ -12,26 +12,63 @@ use crate::{
 const STACK_SIZE: usize = 4096 * 16;
 
 #[repr(align(16))]
-struct TaskStack([u8; STACK_SIZE]);
+struct KernelTaskStack([u8; STACK_SIZE]);
+
+#[repr(align(4096))]
+struct UserTaskStack([u8; STACK_SIZE]);
 
 pub struct UserSpaceTaskInfo {
     page_table: SpinLock<ArmPageTableRoot>,
+    user_stack: KBox<UserTaskStack>,
+    kernel_stack: KBox<KernelTaskStack>,
     segments: KVec<Segment>,
+}
+
+pub struct KernelSpaceTaskInfo {
+    kernel_stack: KBox<KernelTaskStack>,
+}
+
+pub enum TaskInfo {
+    Kernel(KernelSpaceTaskInfo),
+    User(UserSpaceTaskInfo),
+}
+
+impl TaskInfo {
+    fn new_kernel(stack: KBox<KernelTaskStack>) -> Self {
+        Self::Kernel(KernelSpaceTaskInfo {
+            kernel_stack: stack,
+        })
+    }
 }
 
 #[repr(align(16))]
 pub struct Task {
     registers: SpinLock<ExceptionRegisters>,
     links: ListLinks,
-    // For userspace threads, used only for exception handling.
-    // For kernelspace threads, this is also their stack.
-    kernel_stack: KBox<TaskStack>,
-    userspace: Option<Arc<UserSpaceTaskInfo>>,
+    task_info: Arc<TaskInfo>,
 }
 
 impl Task {
-    pub fn kernel_stack_bottom(&self) -> u64 {
-        self.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+    pub fn stack_top(&self) -> u64 {
+        match *self.task_info {
+            TaskInfo::Kernel(ref kernel_space_task_info) => {
+                kernel_space_task_info.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+            }
+            TaskInfo::User(ref user_space_task_info) => {
+                user_space_task_info.user_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+            }
+        }
+    }
+
+    pub fn kernel_stack_top(&self) -> u64 {
+        match *self.task_info {
+            TaskInfo::Kernel(ref kernel_space_task_info) => {
+                kernel_space_task_info.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+            }
+            TaskInfo::User(ref user_space_task_info) => {
+                user_space_task_info.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+            }
+        }
     }
 }
 
@@ -80,7 +117,12 @@ pub struct Sched {
     scheduled: SpinLock<Option<Arc<Task>>>,
 }
 
-fn create_stack() -> KBox<TaskStack> {
+fn create_kernel_stack() -> KBox<KernelTaskStack> {
+    let b = KBox::new_zeroed_in(&KERNEL_ALLOCATOR);
+    unsafe { b.assume_init() }
+}
+
+fn create_user_stack() -> KBox<UserTaskStack> {
     let b = KBox::new_zeroed_in(&KERNEL_ALLOCATOR);
     unsafe { b.assume_init() }
 }
@@ -208,15 +250,14 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            kernel_stack: create_stack(),
-            userspace: None,
+            task_info: Arc::new(TaskInfo::new_kernel(create_kernel_stack())),
         });
 
         let mut registers = task.registers.lock();
         registers.elr = (thread_wrapper) as u64;
         registers.gprs[0] = (f as usize) as u64;
         registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.kernel_stack_bottom();
+        registers.gprs[31] = task.stack_top();
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
@@ -228,12 +269,16 @@ impl Sched {
     }
 
     pub fn load_program(&self, elf: &[u8]) {
+        const STACK_VIRTUAL_ADDR: usize = 0x800000;
+
         let parser = ElfParser::new(elf);
 
         let num_segments = parser.num_segments();
 
         let mut segments = kvec();
         let page_table = ArmPageTableRoot::create_user();
+
+        let user_stack = create_user_stack();
 
         for index in 0..num_segments {
             let segment = parser.segment(index);
@@ -248,22 +293,30 @@ impl Sched {
             }
         }
 
+        page_table.map_page_range(
+            STACK_VIRTUAL_ADDR,
+            user_stack.0.as_ptr().addr() & 0x7fffffffff,
+            user_stack.0.len().div_ceil(4096),
+        );
+
         let userspace = UserSpaceTaskInfo {
             page_table: SpinLock::new(page_table),
             segments,
+            user_stack,
+            kernel_stack: create_kernel_stack(),
         };
 
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            kernel_stack: create_stack(),
-            userspace: Some(Arc::new(userspace)),
+            task_info: Arc::new(TaskInfo::User(userspace)),
         });
 
         let mut registers = task.registers.lock();
         registers.elr = parser.entry_vma() as u64;
-        registers.gprs[0] = 27;
-        registers.gprs[31] = task.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        registers.gprs[31] = task.kernel_stack_top();
+        registers.sp_el0 = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64;
+
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
@@ -279,15 +332,14 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            kernel_stack: create_stack(),
-            userspace: None,
+            task_info: Arc::new(TaskInfo::new_kernel(create_kernel_stack())),
         });
 
         let mut registers = task.registers.lock();
         registers.elr = (thread_wrapper) as u64;
         registers.gprs[0] = (f as usize) as u64;
         registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64;
+        registers.gprs[31] = task.stack_top();
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
@@ -313,12 +365,8 @@ impl Sched {
         if let Some(task) = task {
             let mut scheduled = self.scheduled.lock();
 
-            if let Some(ref userspace) = task.userspace {
+            if let TaskInfo::User(ref userspace) = *task.task_info {
                 userspace.page_table.lock().bind_user();
-
-                // unsafe {
-                //     write_sysreg!(SP_EL1, task.kernel_stack_bottom());
-                // }
             }
 
             *scheduled = Some(task.clone_arc());

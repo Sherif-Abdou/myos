@@ -135,16 +135,9 @@ pub fn threaded_init(_arg: *mut ()) {
 
     let fs = Ext2Fs::new();
 
-    let exe_file = fs.open("userspace_program").unwrap();
-    let exe_size = exe_file.meta().file_size as usize;
+    static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
 
-    let mut buf: UniqueArc<[u8; 100_000]> = UniqueArc::zeroed();
-
-    exe_file.read(0, &mut buf[..exe_size]);
-
-    // static ELF_FILE: &[u8] = include_bytes!("../example_program/userspace_program");
-
-    SCHEDULER.get().unwrap().load_program(&buf[..exe_size]);
+    SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
     printk!("Kernel initialized\n");
     loop {
