@@ -1,6 +1,6 @@
-use core::ffi::CStr;
+use core::str;
 
-use alloc::slice;
+use alloc::{slice};
 
 use crate::{interrupts::ExceptionRegisters, printk, sched::SCHEDULER, subsystem::CONSOLE};
 
@@ -22,9 +22,9 @@ impl Syscall {
 
 pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let addr = unsafe { (*regs).gprs[0] } as *mut u8;
+    let len = unsafe { (*regs).gprs[1] } as usize;
 
-    let cstr = unsafe { CStr::from_ptr(addr) };
-    let str = cstr.to_str().unwrap();
+    let str = unsafe { str::from_utf8(slice::from_raw_parts(addr, len)).unwrap() };
 
     printk!("{}", str);
 

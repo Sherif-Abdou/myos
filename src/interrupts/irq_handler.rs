@@ -1,6 +1,5 @@
 use core::{
     arch::asm,
-    ffi::CStr,
     sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
 

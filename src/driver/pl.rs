@@ -42,6 +42,7 @@ fn irq_handler(driver: Option<&ArcAny>) {
             let byte = unsafe { driver.regs.read_u8(UARTDR) };
             driver.rx_ring.lock().push(byte);
         }
+        driver.rx_wait_queue.unblock_all();
     }
 
     unsafe {
@@ -52,6 +53,7 @@ fn irq_handler(driver: Option<&ArcAny>) {
 pub struct Pl {
     regs: Mmio,
     tx_wait_queue: WaitQueue,
+    rx_wait_queue: WaitQueue,
     rx_ring: KBox<SpinLock<Deque<u8, 64>>>,
 }
 
@@ -109,16 +111,24 @@ impl ConsoleDriver for Pl {
     }
 
     fn read(&self, buf: &mut [u8]) -> usize {
-        let mut rx_ring = self.rx_ring.lock();
+        loop {
+            let mut rx_ring = self.rx_ring.lock();
 
-        let (front, _) = rx_ring.as_slices();
+            let should_block = self.rx_wait_queue.prepare_enqueue(|| rx_ring.is_empty());
 
-        let bytes_read = front.len().min(buf.len());
-        buf[..bytes_read].copy_from_slice(&front[..bytes_read]);
+            if should_block {
+                drop(rx_ring);
+                self.rx_wait_queue.block();
+            } else {
+                let (front, _) = rx_ring.as_slices();
 
-        rx_ring.pop_many(bytes_read);
+                let bytes_read = front.len().min(buf.len());
+                buf[..bytes_read].copy_from_slice(&front[..bytes_read]);
 
-        bytes_read
+                rx_ring.pop_many(bytes_read);
+                return bytes_read;
+            }
+        }
     }
 }
 
@@ -135,6 +145,7 @@ impl Driver for Pl {
         Ok(Self {
             regs: mmio,
             tx_wait_queue: WaitQueue::new(),
+            rx_wait_queue: WaitQueue::new(),
             rx_ring: kbox(SpinLock::new(Deque::new())),
         })
     }
