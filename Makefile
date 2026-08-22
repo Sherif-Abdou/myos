@@ -50,9 +50,9 @@ virt.dtb: $(TARGET)
 		-drive if=none,file=disk.qcow2,format=qcow2,id=hd0 \
 		-device virtio-blk-device,drive=hd0 \
 
-debug: $(TARGET) $(EXAMPLE_PROGRAM) virt.dtb
+debug: $(EXAMPLE_PROGRAM) $(TARGET) virt.dtb
 	cargo b
 	$(BASE_COMMAND) -s -S
-emulate: $(TARGET) $(EXAMPLE_PROGRAM) virt.dtb
+emulate: $(EXAMPLE_PROGRAM) $(TARGET) virt.dtb
 	cargo b
 	$(BASE_COMMAND)

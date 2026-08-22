@@ -22,9 +22,21 @@ pub trait ConsoleDriver: Driver {
 
         Ok(())
     }
+
+    fn read(&self, buf: &mut [u8]) -> usize {
+        let _ = buf;
+
+        0
+    }
 }
 
 pub struct Console(Arc<dyn ConsoleDriver + Send + Sync + 'static>);
+
+impl Console {
+    pub fn read(&self, buf: &mut [u8]) -> usize {
+        self.0.read(buf)
+    }
+}
 
 impl Write for &Console {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {

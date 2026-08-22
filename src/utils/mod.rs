@@ -8,6 +8,7 @@ mod string;
 
 pub use arc::*;
 pub use core_lock::*;
+pub use deque::Deque;
 pub use intrusive_list::*;
 pub use mmio::Mmio;
 pub use spin_lock::*;

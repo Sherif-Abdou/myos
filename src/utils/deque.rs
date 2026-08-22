@@ -35,6 +35,7 @@ impl<T, const N: usize> Deque<T, N> {
 
         self.buffer[index].write(value);
         self.end = (self.end + 1) % N;
+        self.len += 1;
     }
 
     pub const fn front(&self) -> &T {
@@ -78,7 +79,7 @@ impl<T, const N: usize> Deque<T, N> {
         assert!(count <= self.len());
         let end = (self.start + count) % (N + 1);
         unsafe {
-            if self.start < self.end {
+            if self.start <= self.end {
                 (self.buffer[self.start..end].assume_init_ref(), &[])
             } else {
                 (

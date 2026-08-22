@@ -1,12 +1,13 @@
 use crate::{
     GIC,
+    allocators::{KBox, kbox},
     arm_pl::disable_earlyconsole,
     driver::Driver,
     dtb::FdtNode,
     interrupts::{IRQ_TABLE, can_block},
     sched::WaitQueue,
     subsystem::{ConsoleDriver, set_console},
-    utils::{Arc, ArcAny, Mmio, expect_downcast_ref},
+    utils::{Arc, ArcAny, Deque, Mmio, SpinLock, expect_downcast_ref},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;
@@ -30,15 +31,16 @@ fn irq_handler(driver: Option<&ArcAny>) {
 
     let status = unsafe { driver.regs.read_u16(UARTMIS) };
     if status & (1 << 5) != 0 {
-        if driver.wait_queue.is_empty() {
+        if driver.tx_wait_queue.is_empty() {
             driver.disable_tx_irq();
         } else {
-            driver.wait_queue.unblock_front();
+            driver.tx_wait_queue.unblock_front();
         }
     }
     if status & (1 << 4) != 0 {
         while unsafe { driver.regs.read_u16(UARTFR) } & (1 << 4) == 0 {
-            let _ = unsafe { driver.regs.read_u8(UARTDR) };
+            let byte = unsafe { driver.regs.read_u8(UARTDR) };
+            driver.rx_ring.lock().push(byte);
         }
     }
 
@@ -49,7 +51,8 @@ fn irq_handler(driver: Option<&ArcAny>) {
 
 pub struct Pl {
     regs: Mmio,
-    wait_queue: WaitQueue,
+    tx_wait_queue: WaitQueue,
+    rx_ring: KBox<SpinLock<Deque<u8, 64>>>,
 }
 
 impl Pl {
@@ -88,10 +91,10 @@ impl ConsoleDriver for Pl {
             if can_block() {
                 self.enable_tx_irq();
                 while self
-                    .wait_queue
+                    .tx_wait_queue
                     .prepare_enqueue(|| unsafe { self.regs.read_u16(UARTFR) } & (1 << 5) != 0)
                 {
-                    self.wait_queue.block();
+                    self.tx_wait_queue.block();
                 }
             } else {
                 while unsafe { self.regs.read_u16(UARTFR) } & (1 << 5) != 0 {
@@ -103,6 +106,19 @@ impl ConsoleDriver for Pl {
                 self.regs.write_u8(*c, UARTDR);
             }
         }
+    }
+
+    fn read(&self, buf: &mut [u8]) -> usize {
+        let mut rx_ring = self.rx_ring.lock();
+
+        let (front, _) = rx_ring.as_slices();
+
+        let bytes_read = front.len().min(buf.len());
+        buf[..bytes_read].copy_from_slice(&front[..bytes_read]);
+
+        rx_ring.pop_many(bytes_read);
+
+        bytes_read
     }
 }
 
@@ -118,7 +134,8 @@ impl Driver for Pl {
 
         Ok(Self {
             regs: mmio,
-            wait_queue: WaitQueue::new(),
+            tx_wait_queue: WaitQueue::new(),
+            rx_ring: kbox(SpinLock::new(Deque::new())),
         })
     }
 

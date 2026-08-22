@@ -33,9 +33,9 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{Ext2Fs, FileSystem, build_kernel_page_table},
+    subsystem::{Ext2Fs, build_kernel_page_table},
     timer::ArmTimer,
-    utils::{OnceSpinLock, UniqueArc},
+    utils::OnceSpinLock,
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));

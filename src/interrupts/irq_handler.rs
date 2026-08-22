@@ -5,10 +5,11 @@ use core::{
 };
 
 use crate::{
-    Gic, early_printk, printk, read_sysreg,
+    Gic, early_printk,
+    interrupts::syscalls::dispatch_syscall,
+    printk, read_sysreg,
     sched::SCHEDULER,
     utils::{ArcAny, PerCpuLock, SpinLock},
-    write_sysreg,
 };
 
 pub static RETURN_TABLE: PerCpuLock<Option<*const ExceptionRegisters>> = PerCpuLock::nones();
@@ -76,24 +77,7 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
     let ec = (esr >> 26) & 0x3f;
 
     if ec == 0x15 {
-        let call = unsafe { (*regs).gprs[8] };
-
-        if call == 27 {
-            let addr = unsafe { (*regs).gprs[0] } as *mut u8;
-
-            let cstr = unsafe { CStr::from_ptr(addr) };
-
-            let str = cstr.to_str().unwrap();
-
-            printk!("{}", str);
-            regs
-        } else if call == 50 {
-            SCHEDULER.get().unwrap().end_task();
-
-            SCHEDULER.get().unwrap().next_task().unwrap()
-        } else {
-            regs
-        }
+        dispatch_syscall(regs)
     } else {
         printk!(
             "EXCEPTION at 0x{:x}, FAR 0x{:x}, ESR 0x{:x} \n",
