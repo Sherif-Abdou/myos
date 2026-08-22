@@ -33,7 +33,7 @@ use crate::{
     interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
-    subsystem::{Ext2Fs, build_kernel_page_table},
+    subsystem::{EXT2_FS, Ext2Fs, build_kernel_page_table},
     timer::ArmTimer,
     utils::OnceSpinLock,
 };
@@ -133,7 +133,7 @@ pub fn threaded_init(_arg: *mut ()) {
 
     printk!("Walked DTS\n");
 
-    let fs = Ext2Fs::new();
+    let _ = EXT2_FS.set(Ext2Fs::new());
 
     static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 

@@ -1,9 +1,12 @@
+use core::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec},
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec},
     elf::Segment,
     impl_link,
     interrupts::ExceptionRegisters,
-    subsystem::ArmPageTableRoot,
+    sched::Mutex,
+    subsystem::{ArmPageTableRoot, Inode},
     utils::{Arc, ListLinks, SpinLock},
 };
 
@@ -40,12 +43,14 @@ pub struct UserSpaceTaskInfo {
     pub(crate) user_stack: KBox<UserTaskStack>,
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
     pub(crate) segments: KVec<Segment>,
+    pub(crate) fds: TaskFdTable,
 }
 
 pub struct KernelSpaceTaskInfo {
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum TaskInfo {
     Kernel(KernelSpaceTaskInfo),
     User(UserSpaceTaskInfo),
@@ -88,6 +93,13 @@ impl Task {
             }
         }
     }
+
+    pub fn user_fd_table(&self) -> Option<&TaskFdTable> {
+        match *self.task_info {
+            TaskInfo::Kernel(_) => None,
+            TaskInfo::User(ref user_space_task_info) => Some(&user_space_task_info.fds),
+        }
+    }
 }
 
 pub(crate) fn create_kernel_stack() -> KBox<KernelTaskStack> {
@@ -101,3 +113,112 @@ pub(crate) fn create_user_stack() -> KBox<UserTaskStack> {
 }
 
 impl_link!(Task, 0 => links);
+
+pub struct TaskFdTable {
+    fds: Mutex<KVec<TaskFd>>,
+    next_fd_number: AtomicUsize,
+}
+
+impl TaskFdTable {
+    pub fn new() -> Self {
+        Self {
+            fds: Mutex::new(kvec()),
+            next_fd_number: AtomicUsize::new(11),
+        }
+    }
+
+    pub fn add_file_fd(&self, inode: Arc<Inode>) -> usize {
+        let mut fds = self.fds.lock();
+        let descriptor = self.next_fd_number.fetch_add(1, SeqCst);
+
+        fds.push(TaskFd::File {
+            descriptor,
+            inode,
+            offset: AtomicUsize::new(0),
+        });
+
+        descriptor
+    }
+
+    pub fn read(&self, descriptor: usize, buf: &mut [u8]) -> isize {
+        let fds = self.fds.lock();
+        let Some(fd) = fds.iter().find(|fd| fd.descriptor() == descriptor) else {
+            return -1;
+        };
+
+        fd.read(buf)
+    }
+
+    pub fn write(&self, descriptor: usize, buf: &[u8]) -> isize {
+        let fds = self.fds.lock();
+        let Some(fd) = fds.iter().find(|fd| fd.descriptor() == descriptor) else {
+            return -1;
+        };
+
+        fd.write(buf)
+    }
+
+    pub fn close(&self, descriptor: usize) {
+        let mut fds = self.fds.lock();
+
+        fds.retain(|fd| fd.descriptor() != descriptor);
+    }
+}
+
+enum TaskFd {
+    File {
+        descriptor: usize,
+        inode: Arc<Inode>,
+        offset: AtomicUsize,
+    },
+}
+
+impl TaskFd {
+    pub fn descriptor(&self) -> usize {
+        match self {
+            TaskFd::File {
+                descriptor,
+                inode: _,
+                offset: _,
+            } => *descriptor,
+        }
+    }
+
+    pub fn read(&self, buf: &mut [u8]) -> isize {
+        match self {
+            TaskFd::File {
+                descriptor: _,
+                inode,
+                offset,
+            } => {
+                let local_offset = offset.load(SeqCst);
+                if let Ok(read) = inode.read(local_offset as u64, buf) {
+                    offset.fetch_add(read, SeqCst);
+
+                    read as isize
+                } else {
+                    -1
+                }
+            }
+        }
+    }
+
+    pub fn write(&self, buf: &[u8]) -> isize {
+        match self {
+            TaskFd::File {
+                descriptor: _,
+                inode,
+                offset,
+            } => {
+                let local_offset = offset.load(SeqCst);
+                if let Ok(()) = inode.write(local_offset as u64, buf) {
+                    offset.fetch_add(buf.len(), SeqCst);
+
+                    buf.len() as isize
+                } else {
+                    -1
+                }
+            }
+        }
+    }
+}

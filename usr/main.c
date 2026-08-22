@@ -32,23 +32,25 @@ uintptr_t syscall(uintptr_t num, uintptr_t x0, uintptr_t x1, uintptr_t x2,
     return ret;
 }
 
+int write(int fd, const char *buf, size_t len) {
+    syscall(0, fd, (long long)buf, len, 0, 0, 0, 0, 0);
+    return 0;
+}
+
+int read(int fd, char *str, long len) {
+    return syscall(1, fd, (long long)str, len, 0, 0, 0, 0, 0);
+}
+
 int puts(const char *str) {
-    syscall(0, (long long)str, strlen(str), 0, 0, 0, 0, 0, 0);
+    write(0, str, strlen(str));
     return 0;
 }
 
-int write(const char *buf, size_t len) {
-    syscall(0, (long long)buf, len, 0, 0, 0, 0, 0, 0);
-    return 0;
-}
+int putchar(int c) {
+    char buf = c;
 
-int putchar(char c) {
-    syscall(0, (long long)&c, 1, 0, 0, 0, 0, 0, 0);
+    write(0, &buf, 1);
     return 0;
-}
-
-int read(char *str, long len) {
-    return syscall(1, (long long)str, len, 0, 0, 0, 0, 0, 0);
 }
 
 void exit(int code) {
@@ -58,16 +60,14 @@ void exit(int code) {
 
 const char *base = "hello world\n";
 
-void _start(void) {
-    puts(base);
-
+void shell(void) {
     char line[64];
     line[63] = 0;
     size_t cursor = 0;
 
     puts("# ");
     while (1) {
-        size_t bytes_read = read(line + cursor, 63 - cursor);
+        size_t bytes_read = read(1, line + cursor, 63 - cursor);
         if (bytes_read > 0) {
             for (int i = 0; i < bytes_read; ++i) {
                 if (line[cursor] == 127) {
@@ -77,7 +77,7 @@ void _start(void) {
                     }
                 } else if (line[cursor] == '\r') {
                     putchar('\n');
-                    write(line, cursor);
+                    write(0, line, cursor);
                     putchar('\n');
                     cursor = 0;
                     puts("# ");
@@ -88,6 +88,10 @@ void _start(void) {
             }
         }
     }
+}
+
+void _start(void) {
+    puts(base);
 
     exit(0);
 }

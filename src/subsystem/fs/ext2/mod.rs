@@ -7,14 +7,15 @@ use crate::{
             cache::Ext2InodeCache,
             raw::{Ext2Inode, SuperBlock},
         },
-    },
-    utils::{Arc, UniqueArc},
+    }, utils::{Arc, OnceSpinLock, UniqueArc},
 };
 
 mod cache;
 mod cursor;
 mod inode;
 mod raw;
+
+pub static EXT2_FS: OnceSpinLock<Ext2Fs> = OnceSpinLock::new();
 
 pub struct Ext2Fs {
     super_block: Arc<SuperBlock>,

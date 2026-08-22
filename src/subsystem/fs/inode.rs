@@ -18,7 +18,7 @@ pub enum FsError {
 
 pub type FsResult<T> = Result<T, FsError>;
 
-pub trait InodeOperations {
+pub trait InodeOperations: Send + Sync + 'static {
     fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
         let _ = offset;
         let _ = buffer;

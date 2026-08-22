@@ -290,7 +290,11 @@ impl ArmPageTableRoot {
             let page_phys_addr = i * region_size;
             let accessible = page_phys_addr < phys_end as usize;
 
-            descriptor.set_attr_group(0);
+            if i == 0 {
+                descriptor.set_attr_group(1);
+            } else {
+                descriptor.set_attr_group(0);
+            }
             descriptor.set_phys_address(page_phys_addr);
             descriptor.set_af(accessible);
             descriptor.set_page_descriptor(false);

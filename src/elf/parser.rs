@@ -57,7 +57,7 @@ impl SegmentType {
     pub fn load_from_source(header: &ProgramHeader, reader: impl ElfSource) -> Self {
         let front_padding = header.vaddr % 4096;
 
-        let buffer_len = align_up(front_padding + header.filesz, 4096);
+        let buffer_len = align_up(front_padding + header.memsz, 4096);
         let mut allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
             .allocate_zeroed(Self::layout(buffer_len))
             .unwrap();
@@ -220,7 +220,7 @@ impl<S: ElfSource> ElfParser<S> {
 
             if mem_len == 0 {
                 blob = SegmentType::load_zeroed(&header);
-            } else if disk_len == mem_len {
+            } else if disk_len <= mem_len {
                 blob = SegmentType::load_from_source(&header, &self.source);
             } else {
                 panic!("Cannot handle segment #{}", index);

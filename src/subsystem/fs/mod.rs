@@ -4,7 +4,7 @@ mod tmpfs;
 
 use crate::utils::{Arc, List, ListLinkWrapper};
 
-pub use ext2::Ext2Fs;
+pub use ext2::{Ext2Fs, EXT2_FS};
 pub use inode::*;
 pub use tmpfs::TmpFs;
 
