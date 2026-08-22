@@ -7,6 +7,7 @@ use crate::{
     printk,
     sched::SCHEDULER,
     subsystem::{CONSOLE, EXT2_FS, FileSystem},
+    timer::us_sleep,
 };
 
 pub(crate) struct Syscall {
@@ -123,6 +124,18 @@ pub fn exit(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     SCHEDULER.get().unwrap().next_task().unwrap()
 }
 
+pub fn nanosleep(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let delay_ns = unsafe { (*regs).gprs[0] };
+
+    us_sleep(delay_ns / 1000);
+
+    unsafe {
+        (*regs).gprs[0] = 0;
+    }
+
+    regs
+}
+
 const fn build_syscall_table() -> [Syscall; 100] {
     let mut table = [const { Syscall::empty() }; 100];
 
@@ -130,6 +143,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[1] = Syscall::new(read);
     table[8] = Syscall::new(open);
     table[11] = Syscall::new(close);
+    table[17] = Syscall::new(nanosleep);
     table[50] = Syscall::new(exit);
 
     table

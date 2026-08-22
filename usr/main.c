@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 size_t strlen(const char *str) {
     size_t i = 0;
@@ -50,6 +51,12 @@ int putchar(int c) {
     char buf = c;
 
     write(0, &buf, 1);
+    return 0;
+}
+
+int ns_sleep(long long delay_ns) {
+    syscall(17, delay_ns, 0, 0, 0, 0, 0, 0, 0);
+
     return 0;
 }
 

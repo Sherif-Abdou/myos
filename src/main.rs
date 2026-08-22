@@ -34,8 +34,8 @@ use crate::{
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
     subsystem::{EXT2_FS, Ext2Fs, build_kernel_page_table},
-    timer::ArmTimer,
-    utils::OnceSpinLock,
+    timer::{ArmTimer, TIMER_QUEUE, TimerQueue, us_sleep},
+    utils::{ArcAny, OnceSpinLock},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -55,6 +55,16 @@ fn panic(info: &PanicInfo) -> ! {
 static GIC: OnceSpinLock<KBox<Gic>> = OnceSpinLock::new();
 
 static FDT: OnceSpinLock<Fdt> = OnceSpinLock::new();
+
+fn periodic_timer_handler(_arc: Option<&ArcAny>) {
+    let timer_queue = TIMER_QUEUE.get().unwrap();
+    timer_queue.enqueue(10_000, periodic_timer_handler, None);
+
+    if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
+        SCHEDULER.get().unwrap().flush_kill_queue();
+        *RETURN_TABLE.lock() = Some(new_ret);
+    }
+}
 
 #[unsafe(no_mangle)]
 extern "C" fn entry() {
@@ -83,22 +93,28 @@ extern "C" fn entry() {
 
     assert!(GIC.set(gic).is_ok(), "Could not initialize GIC");
 
-    ArmTimer::enable();
-    ArmTimer::wait(100_000);
-
     GIC.get().unwrap().enable_local_ppi(27);
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
 
+    let _ = TIMER_QUEUE.set(TimerQueue::new());
+
+    TIMER_QUEUE
+        .get()
+        .unwrap()
+        .enqueue(10_000, periodic_timer_handler, None);
+
     IRQ_TABLE.lock().register_interrupt(
         27,
         |_| {
-            ArmTimer::wait(10_000);
+            let timer_queue = TIMER_QUEUE.get().unwrap();
+            let event = timer_queue.pop();
 
-            if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
-                SCHEDULER.get().unwrap().flush_kill_queue();
-                *RETURN_TABLE.lock() = Some(new_ret);
+            if let Some(event) = event {
+                event.dispatch();
             }
+
+            timer_queue.wait_for_next();
         },
         None,
     );
@@ -137,9 +153,15 @@ pub fn threaded_init(_arg: *mut ()) {
 
     static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 
-    SCHEDULER.get().unwrap().load_program(ELF_FILE);
+    // SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
     printk!("Kernel initialized\n");
+
+    printk!("a\n");
+    us_sleep(1_000_000);
+    printk!("b\n");
+    us_sleep(1_000_000);
+    printk!("c\n");
     loop {
         unsafe {
             asm!("wfi");
