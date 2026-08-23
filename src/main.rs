@@ -153,7 +153,7 @@ pub fn threaded_init(_arg: *mut ()) {
 
     static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 
-    // SCHEDULER.get().unwrap().load_program(ELF_FILE);
+    SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
     printk!("Kernel initialized\n");
 

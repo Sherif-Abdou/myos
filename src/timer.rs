@@ -27,13 +27,23 @@ impl ArmTimer {
         }
     }
 
-    pub fn wait(micros: u64) {
+    pub fn wait_for(micros: u64) {
         let mut freq = 0u64;
         unsafe {
             read_sysreg!(freq, CNTFRQ_EL0);
 
             let ticks = (micros * freq) / 1_000_000;
             write_sysreg!(CNTV_TVAL_EL0, ticks);
+        }
+    }
+
+    pub fn wait_until(micros: u64) {
+        let mut freq = 0u64;
+        unsafe {
+            read_sysreg!(freq, CNTFRQ_EL0);
+
+            let ticks = (((micros as u128) * (freq as u128)) / 1_000_000) as u64;
+            write_sysreg!(CNTV_CVAL_EL0, ticks);
         }
     }
 
@@ -46,7 +56,7 @@ impl ArmTimer {
             read_sysreg!(freq, CNTFRQ_EL0);
         }
 
-        (time * 1_000_000) / freq
+        ((time as u128 * 1_000_000 as u128) / freq as u128) as u64
     }
 }
 
@@ -83,9 +93,8 @@ impl TimerQueue {
 
         if let Some(front) = queue.peek() {
             ArmTimer::enable();
-            let current_time = ArmTimer::now();
 
-            ArmTimer::wait(front.target_time.saturating_sub(current_time));
+            ArmTimer::wait_until(front.target_time);
         } else {
             ArmTimer::disable();
         }

@@ -74,6 +74,8 @@ extern "C" fn save_callee_regs(dst: *mut u64, new_pc: usize) {
 extern "C" fn restore_regs_and_eret(regs: *const ExceptionRegisters) {
     naked_asm!(
         r#"
+    ldp x8, x9, [x0, 0x110]
+    msr sp_el0, x8
     ldp x8, x9, [x0, 0x100]
     msr elr_el1, x8
     msr spsr_el1, x9
