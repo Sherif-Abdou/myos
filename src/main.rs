@@ -62,7 +62,7 @@ fn periodic_timer_handler(_arc: Option<&ArcAny>) {
 
     if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
         SCHEDULER.get().unwrap().flush_kill_queue();
-        *RETURN_TABLE.lock() = Some(new_ret);
+        RETURN_TABLE.lock().put(&new_ret);
     }
 }
 

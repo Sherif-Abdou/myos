@@ -3,7 +3,7 @@ use core::{ffi::CStr, str};
 use alloc::slice;
 
 use crate::{
-    interrupts::ExceptionRegisters,
+    interrupts::{ExceptionRegisters, RETURN_TABLE, daifset},
     printk,
     sched::SCHEDULER,
     subsystem::{CONSOLE, EXT2_FS, FileSystem},
@@ -121,7 +121,12 @@ pub fn close(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 pub fn exit(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     SCHEDULER.get().unwrap().end_task();
 
-    SCHEDULER.get().unwrap().next_task().unwrap()
+    daifset();
+    RETURN_TABLE
+        .lock()
+        .put(&SCHEDULER.get().unwrap().next_task().unwrap());
+
+    RETURN_TABLE.lock().take().unwrap()
 }
 
 pub fn nanosleep(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {

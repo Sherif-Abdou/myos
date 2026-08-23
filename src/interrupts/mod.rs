@@ -21,7 +21,7 @@ pub fn daifclr() {
     }
 }
 
-/// Unmask interrupts.
+/// Mask interrupts.
 pub fn daifset() {
     unsafe {
         asm!("msr daifset, #0b1111");

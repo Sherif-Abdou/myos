@@ -9,7 +9,10 @@ use crate::{
         create_user_stack,
     },
     subsystem::ArmPageTableRoot,
-    utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
+    utils::{
+        Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc,
+        with_core_critical_section,
+    },
 };
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
@@ -21,7 +24,9 @@ extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
 
     let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
 
-    restore_regs_and_eret(next_task);
+    with_core_critical_section(|| {
+        restore_regs_and_eret(&raw const next_task);
+    });
 }
 
 pub fn init_scheduler() {
@@ -126,7 +131,9 @@ pub fn sched_yield() {
 
     let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
 
-    restore_regs_and_eret(next_task);
+    with_core_critical_section(|| {
+        restore_regs_and_eret(&raw const next_task);
+    });
 
     unsafe {
         asm!("1: nop");
@@ -289,7 +296,7 @@ impl Sched {
         *registers = state.clone();
     }
 
-    pub fn next_task(&self) -> Option<*const ExceptionRegisters> {
+    pub fn next_task(&self) -> Option<ExceptionRegisters> {
         let mut tasks = self.run_queue.lock();
         let task = tasks.remove_front();
 
@@ -304,14 +311,14 @@ impl Sched {
 
             tasks.push_back(task);
 
-            Some(&raw const *scheduled.as_ref().unwrap().registers.lock())
+            Some(scheduled.as_ref().unwrap().registers.lock().clone())
         } else {
             // Run the idle task.
             let mut scheduled = self.scheduled.lock();
             let idle = self.idle_task.lock();
             *scheduled = Some(idle.as_ref().unwrap().clone_arc());
 
-            Some(&raw const *scheduled.as_ref().unwrap().registers.lock())
+            Some(scheduled.as_ref().unwrap().registers.lock().clone())
         }
     }
 

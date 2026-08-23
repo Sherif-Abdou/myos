@@ -11,7 +11,6 @@ use crate::utils::{MAX_CPUS, cpu_id};
 
 pub struct CoreLock<T> {
     inner: UnsafeCell<T>,
-    state: AtomicU64,
 }
 
 unsafe impl<T> Sync for CoreLock<T> {}
@@ -35,30 +34,38 @@ impl<T> CoreLock<T> {
     pub const fn new(inner: T) -> Self {
         Self {
             inner: UnsafeCell::new(inner),
-            state: AtomicU64::new(0),
         }
     }
 
-    pub fn lock(&self) -> CoreLockGuard<'_, T> {
-        self.save_daif();
-
-        CoreLockGuard {
-            inner: NonNull::new(self.inner.get()).unwrap(),
-            lock: self,
-        }
-    }
-
-    fn save_daif(&self) {
+    fn save_daif(&self) -> u64 {
         let mut x: u64 = 0;
         unsafe {
             asm!("mrs {x}, daif", x = out(reg) x);
         };
-        self.state.store(x, core::sync::atomic::Ordering::Relaxed);
         unsafe {
             asm!("msr daifset, #0b0010");
         };
+        x
     }
 
+    pub fn lock(&self) -> CoreLockGuard<'_, T> {
+        let daif = self.save_daif();
+
+        CoreLockGuard {
+            inner: NonNull::new(self.inner.get()).unwrap(),
+            lock: self,
+            state: AtomicU64::new(daif),
+        }
+    }
+}
+
+pub struct CoreLockGuard<'a, T> {
+    inner: NonNull<T>,
+    lock: &'a CoreLock<T>,
+    state: AtomicU64,
+}
+
+impl<'a, T> CoreLockGuard<'a, T> {
     fn restore_daif(&self) {
         let x = self.state.load(core::sync::atomic::Ordering::Relaxed);
 
@@ -66,11 +73,6 @@ impl<T> CoreLock<T> {
             asm!("msr daif, {x}", x = in(reg) x);
         };
     }
-}
-
-pub struct CoreLockGuard<'a, T> {
-    inner: NonNull<T>,
-    lock: &'a CoreLock<T>,
 }
 
 impl<T> Deref for CoreLockGuard<'_, T> {
@@ -89,7 +91,7 @@ impl<T> DerefMut for CoreLockGuard<'_, T> {
 
 impl<T> Drop for CoreLockGuard<'_, T> {
     fn drop(&mut self) {
-        self.lock.restore_daif();
+        self.restore_daif();
     }
 }
 
@@ -125,6 +127,15 @@ pub struct PerCpuLock<T> {
     inner: [MaybeUninit<CoreLock<T>>; MAX_CPUS],
 }
 
+#[macro_export]
+macro_rules! create_per_cpu_lock {
+    ($val:expr) => {
+        $crate::utils::PerCpuLock::new(
+            [const { ::core::mem::MaybeUninit::new($crate::utils::CoreLock::new($val)) }; _],
+        )
+    };
+}
+
 impl<T> PerCpuLock<Option<T>> {
     pub const fn nones() -> Self {
         Self {
@@ -134,6 +145,10 @@ impl<T> PerCpuLock<Option<T>> {
 }
 
 impl<T> PerCpuLock<T> {
+    pub const fn new(inner: [MaybeUninit<CoreLock<T>>; MAX_CPUS]) -> Self {
+        Self { inner }
+    }
+
     pub fn from_fn(f: impl Fn(usize) -> T) -> Self {
         let mut array: [MaybeUninit<CoreLock<T>>; MAX_CPUS] =
             [const { MaybeUninit::uninit() }; MAX_CPUS];

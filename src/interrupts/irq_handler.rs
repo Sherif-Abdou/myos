@@ -4,14 +4,45 @@ use core::{
 };
 
 use crate::{
-    Gic, early_printk,
-    interrupts::syscalls::dispatch_syscall,
+    Gic, create_per_cpu_lock, early_printk,
+    interrupts::{daifset, syscalls::dispatch_syscall},
     printk, read_sysreg,
     sched::SCHEDULER,
-    utils::{ArcAny, PerCpuLock, SpinLock},
+    utils::{ArcAny, PerCpuLock, SpinLock, with_core_critical_section},
 };
 
-pub static RETURN_TABLE: PerCpuLock<Option<*const ExceptionRegisters>> = PerCpuLock::nones();
+pub struct ReturnExceptionRegs {
+    regs: ExceptionRegisters,
+    to_use: bool,
+}
+
+impl ReturnExceptionRegs {
+    pub const fn new() -> Self {
+        Self {
+            regs: unsafe { core::mem::zeroed() },
+            to_use: false,
+        }
+    }
+
+    pub fn put(&mut self, regs: &ExceptionRegisters) {
+        self.regs = regs.clone();
+        self.to_use = true;
+    }
+
+    pub fn take(&mut self) -> Option<*const ExceptionRegisters> {
+        if self.to_use {
+            let ptr = &raw const self.regs;
+            self.to_use = false;
+
+            Some(ptr)
+        } else {
+            None
+        }
+    }
+}
+
+pub static RETURN_TABLE: PerCpuLock<ReturnExceptionRegs> =
+    create_per_cpu_lock!(ReturnExceptionRegs::new());
 
 pub static IRQ_TABLE: SpinLock<IrqTable> = SpinLock::new(IrqTable {
     irqs: [const { None }; 1024],
@@ -78,14 +109,19 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
     if ec == 0x15 {
         dispatch_syscall(regs)
     } else {
-        let interrupted_user = unsafe  { (*regs).spsr & 0b1111 } == 0;
+        let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
         if let Some(task) = SCHEDULER.get().unwrap().task()
             && task.is_user_task()
             && interrupted_user
         {
             SCHEDULER.get().unwrap().end_task();
 
-            SCHEDULER.get().unwrap().next_task().unwrap()
+            daifset();
+            RETURN_TABLE
+                .lock()
+                .put(&SCHEDULER.get().unwrap().next_task().unwrap());
+
+            RETURN_TABLE.lock().take().unwrap()
         } else {
             dispatch_kernel_panic(regs, far, elr, esr, ec)
         }
