@@ -1,6 +1,6 @@
 use crate::{
     allocators::{KVec, kvec},
-    early_printk, printk, read_sysreg,
+    read_sysreg,
     sched::WaitQueue,
     utils::{Arc, ArcAny, OnceSpinLock, SpinLock, expect_downcast_ref},
     write_sysreg,
@@ -56,7 +56,7 @@ impl ArmTimer {
             read_sysreg!(freq, CNTFRQ_EL0);
         }
 
-        ((time as u128 * 1_000_000 as u128) / freq as u128) as u64
+        ((time as u128 * 1_000_000) / freq as u128) as u64
     }
 }
 

@@ -1,9 +1,15 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    allocators::kvec, elf::ElfParser, interrupts::{ExceptionRegisters, daifclr, daifset}, sched::{
-        STACK_SIZE, Task, TaskFdTable, TaskInfo, UserSpaceTaskInfo, create_kernel_stack, create_user_stack,
-    }, subsystem::ArmPageTableRoot, utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
+    allocators::kvec,
+    elf::ElfParser,
+    interrupts::{ExceptionRegisters, daifclr, daifset},
+    sched::{
+        STACK_SIZE, Task, TaskFdTable, TaskInfo, UserSpaceTaskInfo, create_kernel_stack,
+        create_user_stack,
+    },
+    subsystem::ArmPageTableRoot,
+    utils::{Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc},
 };
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();

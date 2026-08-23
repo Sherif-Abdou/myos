@@ -34,7 +34,7 @@ use crate::{
     memory::init_allocator,
     sched::{SCHEDULER, init_scheduler},
     subsystem::{EXT2_FS, Ext2Fs, build_kernel_page_table},
-    timer::{ArmTimer, TIMER_QUEUE, TimerQueue, us_sleep},
+    timer::{TIMER_QUEUE, TimerQueue},
     utils::{ArcAny, OnceSpinLock},
 };
 
@@ -157,11 +157,6 @@ pub fn threaded_init(_arg: *mut ()) {
 
     printk!("Kernel initialized\n");
 
-    printk!("a\n");
-    us_sleep(1_000_000);
-    printk!("b\n");
-    us_sleep(1_000_000);
-    printk!("c\n");
     loop {
         unsafe {
             asm!("wfi");

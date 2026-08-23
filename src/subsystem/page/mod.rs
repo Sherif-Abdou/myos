@@ -11,7 +11,6 @@ use crate::{
     allocators::KERNEL_ALLOCATOR,
     dtb::FdtNode,
     impl_link,
-    sched::Mutex,
     utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
 };
 
@@ -274,19 +273,21 @@ impl ArmDescriptorGroup {
 const KERNEL_START_VIRT_ADDR: usize = !0x7fffffffff;
 
 pub struct ArmPageTableRoot {
-    root_group: ArmDescriptorGroupManager,
+    root_group: Arc<ArmDescriptorGroupManager>,
     vma_offset: usize,
 }
 
 impl ArmPageTableRoot {
     pub fn create_kernel_root(memory: &FdtNode) -> Self {
-        let mut group = ArmDescriptorGroupManager::new(0, PageLayer::First);
+        let group = ArmDescriptorGroupManager::new(0, PageLayer::First);
         let region_size = PageLayer::First.get_region_size();
         let phys_start = memory.read_u64("reg", 0).unwrap();
         let phys_range = memory.read_u64("reg", 1).unwrap();
         let phys_end = phys_start + phys_range;
 
-        for (i, descriptor) in unsafe { group.descriptors.as_mut().0.iter_mut().enumerate() } {
+        let mut group_descriptors = group.descriptors.lock();
+
+        for (i, descriptor) in unsafe { group_descriptors.as_mut().0.iter_mut().enumerate() } {
             let page_phys_addr = i * region_size;
             let accessible = page_phys_addr < phys_end as usize;
 
@@ -301,25 +302,30 @@ impl ArmPageTableRoot {
             descriptor.set_valid(accessible);
         }
 
+        drop(group_descriptors);
+
         Self {
-            root_group: group,
+            root_group: Arc::new(group),
             vma_offset: KERNEL_START_VIRT_ADDR,
         }
     }
 
     pub fn create_user() -> Self {
-        let mut group = ArmDescriptorGroupManager::new(0, PageLayer::First);
+        let group = ArmDescriptorGroupManager::new(0, PageLayer::First);
+        let mut group_descriptors = group.descriptors.lock();
 
-        for descriptor in unsafe { group.descriptors.as_mut().0.iter_mut() } {
+        for descriptor in unsafe { group_descriptors.as_mut().0.iter_mut() } {
             descriptor.set_attr_group(0);
             descriptor.set_ap1(1);
-            descriptor.set_af(false);
+            descriptor.set_af(true);
             descriptor.set_page_descriptor(false);
-            descriptor.set_valid(true);
+            descriptor.set_valid(false);
         }
 
+        drop(group_descriptors);
+
         Self {
-            root_group: group,
+            root_group: Arc::new(group),
             vma_offset: 0,
         }
     }
@@ -327,7 +333,7 @@ impl ArmPageTableRoot {
     /// Gets the descriptor for a particular vma, at the Layer 3 portion of the page.
     ///
     /// Makes the layers if needed.
-    pub fn descriptor_for_vma(&self, addr: usize) -> (Arc<ArmDescriptorGroupManager>, usize) {
+    pub fn descriptor_for_vma_or_create(&self, addr: usize) -> ArmDescriptorHandle {
         assert!(addr >= self.vma_offset);
         let relative_addr = addr - self.vma_offset;
 
@@ -342,14 +348,39 @@ impl ArmPageTableRoot {
             let page_group = sub_group.subgroup(index);
             if let Some(page_group) = page_group {
                 let index = (relative_addr / 4096) % NUM_DESCRIPTORS_IN_PAGE;
-                (page_group, index)
+                ArmDescriptorHandle::new(page_group, index)
             } else {
                 sub_group.split_block_descriptor(index);
-                self.descriptor_for_vma(addr)
+                self.descriptor_for_vma_or_create(addr)
             }
         } else {
             self.root_group.split_block_descriptor(index);
-            self.descriptor_for_vma(addr)
+            self.descriptor_for_vma_or_create(addr)
+        }
+    }
+
+    /// Gets the current descriptor for a particular vma. May not be the lowest level.
+    pub fn descriptor_for_vma(&self, addr: usize) -> ArmDescriptorHandle {
+        assert!(addr >= self.vma_offset);
+        let relative_addr = addr - self.vma_offset;
+
+        let region_size = self.root_group.layer.lock().get_region_size();
+        let index = relative_addr / region_size;
+
+        let sub_group = self.root_group.subgroup(index);
+
+        if let Some(sub_group) = sub_group {
+            let region_size = sub_group.layer.lock().get_region_size();
+            let index = (relative_addr / region_size) % NUM_DESCRIPTORS_IN_PAGE;
+            let page_group = sub_group.subgroup(index);
+            if let Some(page_group) = page_group {
+                let index = (relative_addr / 4096) % NUM_DESCRIPTORS_IN_PAGE;
+                ArmDescriptorHandle::new(page_group, index)
+            } else {
+                ArmDescriptorHandle::new(sub_group, index)
+            }
+        } else {
+            ArmDescriptorHandle::new(self.root_group.clone(), index)
         }
     }
 
@@ -360,16 +391,16 @@ impl ArmPageTableRoot {
             let virtual_addr = virtual_addr + 4096 * page;
             let phys_addr = phys_addr + 4096 * page;
 
-            let (descriptor, index) = self.descriptor_for_vma(virtual_addr);
+            let handle = self.descriptor_for_vma_or_create(virtual_addr);
 
-            descriptor.map_page(index, phys_addr);
+            handle.map_page(phys_addr);
         }
     }
 
     /// Binds this page table as the kernel page table. This should really only be called once.
     pub fn bind_kernel(&self) {
         with_core_critical_section(|| {
-            let phys_addr = self.root_group.descriptors.addr().get() & 0x7fffffffff;
+            let phys_addr = self.root_group.descriptors.lock().addr().get() & 0x7fffffffff;
 
             unsafe {
                 asm!(r#"
@@ -390,7 +421,7 @@ impl ArmPageTableRoot {
     /// Binds this page table as the userspace page table.
     pub fn bind_user(&self) {
         with_core_critical_section(|| {
-            let phys_addr = self.root_group.descriptors.addr().get() & 0x7fffffffff;
+            let phys_addr = self.root_group.descriptors.lock().addr().get() & 0x7fffffffff;
 
             unsafe {
                 asm!(r#"
@@ -423,14 +454,13 @@ pub fn build_kernel_page_table(root: &FdtNode) {
 
 pub struct ArmDescriptorGroupManager {
     index: usize,
-    descriptors: NonNull<ArmDescriptorGroup>,
-    children: Mutex<List<ArmDescriptorGroupManager>>,
+    descriptors: SpinLock<NonNull<ArmDescriptorGroup>>,
+    children: SpinLock<List<ArmDescriptorGroupManager>>,
     layer: SpinLock<PageLayer>,
     links: ListLinks,
 }
 
 unsafe impl Send for ArmDescriptorGroupManager {}
-
 unsafe impl Sync for ArmDescriptorGroupManager {}
 
 impl ArmDescriptorGroupManager {
@@ -438,8 +468,8 @@ impl ArmDescriptorGroupManager {
         assert!(phys_addr.is_multiple_of(4096));
 
         unsafe {
-            // TODO: Is this sketch?
-            let group = self.descriptors.as_ptr().as_mut().unwrap();
+            let mut descriptors = self.descriptors.lock();
+            let group = descriptors.as_mut();
             group[index].break_before_make(|mut before| {
                 before.set_af(true);
                 before.set_page_descriptor(true);
@@ -459,20 +489,23 @@ impl ArmDescriptorGroupManager {
             return;
         }
 
-        let descriptor = unsafe { self.descriptors.as_ref()[index] };
+        let descriptors = self.descriptors.lock();
+
+        let descriptor = unsafe { descriptors.as_ref()[index] };
         let phys_addr = descriptor.get_phys_address();
 
         let current_layer = *self.layer.lock();
         let next_layer = current_layer.next_layer();
         assert_ne!(current_layer, next_layer);
 
-        let mut new_group = Self::new(index, next_layer);
+        let new_group = Self::new(index, next_layer);
+        let mut new_group_descriptors = new_group.descriptors.lock();
 
-        let new_group_phys_addr = new_group.descriptors.addr().get();
+        let new_group_phys_addr = new_group_descriptors.addr().get();
 
         let region_size = next_layer.get_region_size();
         for (i, new_descriptor) in
-            unsafe { new_group.descriptors.as_mut().0.iter_mut().enumerate() }
+            unsafe { new_group_descriptors.as_mut().0.iter_mut().enumerate() }
         {
             new_descriptor.set_phys_address(phys_addr + i * region_size);
             new_descriptor.set_af(descriptor.af());
@@ -481,6 +514,7 @@ impl ArmDescriptorGroupManager {
             new_descriptor.set_page_descriptor(next_layer.is_lowest_layer());
             new_descriptor.set_valid(descriptor.valid());
         }
+        drop(new_group_descriptors);
 
         let mut children = self.children.lock();
         let mut cursor = children.cursor_mut();
@@ -495,7 +529,7 @@ impl ArmDescriptorGroupManager {
 
         unsafe {
             // TODO: Is this sketch?
-            let group = self.descriptors.as_ptr().as_mut().unwrap();
+            let group = descriptors.as_ptr().as_mut().unwrap();
             group[index].break_before_make(|mut before| {
                 before.set_phys_address(new_group_phys_addr & 0x7fffffffff);
                 before.set_page_descriptor(true);
@@ -527,8 +561,8 @@ impl ArmDescriptorGroupManager {
 
         Self {
             index,
-            descriptors,
-            children: Mutex::new(List::new()),
+            descriptors: SpinLock::new(descriptors),
+            children: SpinLock::new(List::new()),
             layer: SpinLock::new(layer),
             links: ListLinks::new(),
         }
@@ -538,10 +572,66 @@ impl ArmDescriptorGroupManager {
 impl Drop for ArmDescriptorGroupManager {
     fn drop(&mut self) {
         unsafe {
-            KERNEL_ALLOCATOR
-                .deallocate(self.descriptors.cast(), Layout::new::<ArmDescriptorGroup>());
+            KERNEL_ALLOCATOR.deallocate(
+                self.descriptors.lock().cast(),
+                Layout::new::<ArmDescriptorGroup>(),
+            );
         }
     }
 }
 
 impl_link!(ArmDescriptorGroupManager, 0 => links);
+
+pub struct ArmDescriptorHandle {
+    group: Arc<ArmDescriptorGroupManager>,
+    index: usize,
+}
+
+impl ArmDescriptorHandle {
+    pub fn new(group: Arc<ArmDescriptorGroupManager>, index: usize) -> Self {
+        Self { group, index }
+    }
+
+    pub fn map_page(&self, phys_addr: usize) {
+        self.group.map_page(self.index, phys_addr);
+    }
+
+    pub fn is_lowest_layer(&self) -> bool {
+        self.group.is_lowest_layer()
+    }
+
+    pub fn af(&self) -> bool {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        group[self.index].af()
+    }
+
+    pub fn set_af(&mut self, af: bool) {
+        let index = self.index;
+        let mut locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_mut() };
+
+        // No break-before-make needed
+        group[index].set_af(af);
+    }
+
+    pub fn valid(&self) -> bool {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        group[self.index].valid()
+    }
+
+    pub fn set_valid(&mut self, valid: bool) {
+        let index = self.index;
+        let mut locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_mut() };
+
+        group[index].break_before_make(|mut descriptor| {
+            descriptor.set_valid(valid);
+
+            descriptor
+        });
+    }
+}

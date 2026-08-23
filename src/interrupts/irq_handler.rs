@@ -78,75 +78,95 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
     if ec == 0x15 {
         dispatch_syscall(regs)
     } else {
-        printk!(
-            "EXCEPTION at 0x{:x}, FAR 0x{:x}, ESR 0x{:x} \n",
-            elr,
-            far,
-            esr
-        );
+        let interrupted_user = unsafe  { (*regs).spsr & 0b1111 } == 0;
+        if let Some(task) = SCHEDULER.get().unwrap().task()
+            && task.is_user_task()
+            && interrupted_user
+        {
+            SCHEDULER.get().unwrap().end_task();
+
+            SCHEDULER.get().unwrap().next_task().unwrap()
+        } else {
+            dispatch_kernel_panic(regs, far, elr, esr, ec)
+        }
+    }
+}
+
+fn dispatch_kernel_panic(
+    regs: *mut ExceptionRegisters,
+    far: u64,
+    elr: u64,
+    esr: u64,
+    ec: u64,
+) -> ! {
+    printk!(
+        "EXCEPTION at 0x{:x}, FAR 0x{:x}, ESR 0x{:x} \n",
+        elr,
+        far,
+        esr
+    );
+    unsafe {
+        printk!("x0: {:x}\n", (*regs).gprs[0]);
+        printk!("x1: {:x}\n", (*regs).gprs[1]);
+        printk!("x2: {:x}\n", (*regs).gprs[2]);
+        printk!("x3: {:x}\n", (*regs).gprs[3]);
+        printk!("x4: {:x}\n", (*regs).gprs[4]);
+        printk!("x5: {:x}\n", (*regs).gprs[5]);
+        printk!("x6: {:x}\n", (*regs).gprs[6]);
+        printk!("x7: {:x}\n", (*regs).gprs[7]);
+        printk!("x8: {:x}\n", (*regs).gprs[8]);
+        printk!("x9: {:x}\n", (*regs).gprs[9]);
+        printk!("x10: {:x}\n", (*regs).gprs[10]);
+        printk!("x11: {:x}\n", (*regs).gprs[11]);
+        printk!("x12: {:x}\n", (*regs).gprs[12]);
+        printk!("x13: {:x}\n", (*regs).gprs[13]);
+        printk!("x14: {:x}\n", (*regs).gprs[14]);
+        printk!("x15: {:x}\n", (*regs).gprs[15]);
+        printk!("x16: {:x}\n", (*regs).gprs[16]);
+        printk!("x17: {:x}\n", (*regs).gprs[17]);
+        printk!("x18: {:x}\n", (*regs).gprs[18]);
+        printk!("x19: {:x}\n", (*regs).gprs[19]);
+        printk!("x20: {:x}\n", (*regs).gprs[20]);
+        printk!("x21: {:x}\n", (*regs).gprs[21]);
+        printk!("x22: {:x}\n", (*regs).gprs[22]);
+        printk!("x23: {:x}\n", (*regs).gprs[23]);
+        printk!("x24: {:x}\n", (*regs).gprs[24]);
+        printk!("x25: {:x}\n", (*regs).gprs[25]);
+        printk!("x26: {:x}\n", (*regs).gprs[28]);
+        printk!("x27: {:x}\n", (*regs).gprs[27]);
+        printk!("x28: {:x}\n", (*regs).gprs[28]);
+        printk!("x29: {:x}\n", (*regs).gprs[29]);
+        printk!("x30: {:x}\n", (*regs).gprs[30]);
+        printk!("sp: {:x}\n", (*regs).gprs[31]);
+    }
+
+    match ec {
+        0x1 => {
+            printk!("Trapped WF* Instruction\n");
+        }
+        0x3 => {
+            printk!("Trapped MCR or MRC\n");
+        }
+        0x7 => {
+            printk!("Trapped FPU\n");
+        }
+        0xd => {
+            printk!("Branch target exception\n");
+        }
+        0xe => {
+            printk!("Illegal execution state\n");
+        }
+        0x15 => {
+            printk!("Trapped SVC\n");
+        }
+        _ => {
+            printk!("EC: {:x}\n", ec);
+        }
+    }
+
+    loop {
         unsafe {
-            printk!("x0: {:x}\n", (*regs).gprs[0]);
-            printk!("x1: {:x}\n", (*regs).gprs[1]);
-            printk!("x2: {:x}\n", (*regs).gprs[2]);
-            printk!("x3: {:x}\n", (*regs).gprs[3]);
-            printk!("x4: {:x}\n", (*regs).gprs[4]);
-            printk!("x5: {:x}\n", (*regs).gprs[5]);
-            printk!("x6: {:x}\n", (*regs).gprs[6]);
-            printk!("x7: {:x}\n", (*regs).gprs[7]);
-            printk!("x8: {:x}\n", (*regs).gprs[8]);
-            printk!("x9: {:x}\n", (*regs).gprs[9]);
-            printk!("x10: {:x}\n", (*regs).gprs[10]);
-            printk!("x11: {:x}\n", (*regs).gprs[11]);
-            printk!("x12: {:x}\n", (*regs).gprs[12]);
-            printk!("x13: {:x}\n", (*regs).gprs[13]);
-            printk!("x14: {:x}\n", (*regs).gprs[14]);
-            printk!("x15: {:x}\n", (*regs).gprs[15]);
-            printk!("x16: {:x}\n", (*regs).gprs[16]);
-            printk!("x17: {:x}\n", (*regs).gprs[17]);
-            printk!("x18: {:x}\n", (*regs).gprs[18]);
-            printk!("x19: {:x}\n", (*regs).gprs[19]);
-            printk!("x20: {:x}\n", (*regs).gprs[20]);
-            printk!("x21: {:x}\n", (*regs).gprs[21]);
-            printk!("x22: {:x}\n", (*regs).gprs[22]);
-            printk!("x23: {:x}\n", (*regs).gprs[23]);
-            printk!("x24: {:x}\n", (*regs).gprs[24]);
-            printk!("x25: {:x}\n", (*regs).gprs[25]);
-            printk!("x26: {:x}\n", (*regs).gprs[28]);
-            printk!("x27: {:x}\n", (*regs).gprs[27]);
-            printk!("x28: {:x}\n", (*regs).gprs[28]);
-            printk!("x29: {:x}\n", (*regs).gprs[29]);
-            printk!("x30: {:x}\n", (*regs).gprs[30]);
-            printk!("sp: {:x}\n", (*regs).gprs[31]);
-        }
-
-        match ec {
-            0x1 => {
-                printk!("Trapped WF* Instruction\n");
-            }
-            0x3 => {
-                printk!("Trapped MCR or MRC\n");
-            }
-            0x7 => {
-                printk!("Trapped FPU\n");
-            }
-            0xd => {
-                printk!("Branch target exception\n");
-            }
-            0xe => {
-                printk!("Illegal execution state\n");
-            }
-            0x15 => {
-                printk!("Trapped SVC\n");
-            }
-            _ => {
-                printk!("EC: {:x}\n", ec);
-            }
-        }
-
-        loop {
-            unsafe {
-                asm!("wfi");
-            }
+            asm!("wfi");
         }
     }
 }

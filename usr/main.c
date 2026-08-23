@@ -60,6 +60,10 @@ int ns_sleep(long long delay_ns) {
     return 0;
 }
 
+int ms_sleep(long long delay_ms) {
+    ns_sleep(delay_ms * 1000000);
+}
+
 void exit(int code) {
     syscall(50, code, 0, 0, 0, 0, 0, 0, 0);
     __builtin_unreachable();
@@ -98,7 +102,13 @@ void shell(void) {
 }
 
 void _start(void) {
-    puts(base);
+    puts("a\n");
+    ms_sleep(1000);
+    puts("b\n");
+    ms_sleep(1000);
+    puts("c\n");
+
+    *(volatile int*)0x0;
 
     exit(0);
 }

@@ -7,7 +7,8 @@ use crate::{
             cache::Ext2InodeCache,
             raw::{Ext2Inode, SuperBlock},
         },
-    }, utils::{Arc, OnceSpinLock, UniqueArc},
+    },
+    utils::{Arc, OnceSpinLock, UniqueArc},
 };
 
 mod cache;

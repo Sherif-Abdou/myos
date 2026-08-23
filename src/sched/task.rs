@@ -100,6 +100,13 @@ impl Task {
             TaskInfo::User(ref user_space_task_info) => Some(&user_space_task_info.fds),
         }
     }
+
+    pub fn is_user_task(&self) -> bool {
+        match *self.task_info {
+            TaskInfo::Kernel(_) => false,
+            TaskInfo::User(_) => true,
+        }
+    }
 }
 
 pub(crate) fn create_kernel_stack() -> KBox<KernelTaskStack> {
