@@ -14,6 +14,7 @@ mod interrupts;
 mod linker_symbols;
 mod memory;
 mod sched;
+mod smp;
 mod subsystem;
 mod timer;
 mod utils;
@@ -26,16 +27,7 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox},
-    arm_pl::init_from_dtb_node,
-    driver::DeviceBus,
-    dtb::{Fdt, find_earlyconsole_node},
-    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
-    memory::init_allocator,
-    sched::{SCHEDULER, init_scheduler},
-    subsystem::{EXT2_FS, Ext2Fs, build_kernel_page_table},
-    timer::{TIMER_QUEUE, TimerQueue},
-    utils::{ArcAny, OnceSpinLock},
+    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, create_local_idle_task, init_scheduler}, smp::bringup_core, subsystem::{EXT2_FS, Ext2Fs, KERNEL_PAGE_TABLE, build_kernel_page_table}, timer::{TIMER_QUEUE, TimerQueue, ms_sleep}, utils::{ArcAny, OnceSpinLock},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -57,7 +49,7 @@ static GIC: OnceSpinLock<KBox<Gic>> = OnceSpinLock::new();
 static FDT: OnceSpinLock<Fdt> = OnceSpinLock::new();
 
 fn periodic_timer_handler(_arc: Option<&ArcAny>) {
-    let timer_queue = TIMER_QUEUE.get().unwrap();
+    let timer_queue = TIMER_QUEUE.local().get().unwrap();
     timer_queue.enqueue(10_000, periodic_timer_handler, None);
 
     if let Some(new_ret) = SCHEDULER.get().unwrap().next_task() {
@@ -97,9 +89,10 @@ extern "C" fn entry() {
     Gic::set_local_priority(0xff);
     Gic::enable_local_interrupts();
 
-    let _ = TIMER_QUEUE.set(TimerQueue::new());
+    let _ = TIMER_QUEUE.local().set(TimerQueue::new());
 
     TIMER_QUEUE
+        .local()
         .get()
         .unwrap()
         .enqueue(10_000, periodic_timer_handler, None);
@@ -107,7 +100,7 @@ extern "C" fn entry() {
     IRQ_TABLE.lock().register_interrupt(
         27,
         |_| {
-            let timer_queue = TIMER_QUEUE.get().unwrap();
+            let timer_queue = TIMER_QUEUE.local().get().unwrap();
             let event = timer_queue.pop();
 
             if let Some(event) = event {
@@ -135,6 +128,38 @@ extern "C" fn entry() {
     }
 }
 
+#[unsafe(no_mangle)]
+unsafe extern "C" fn secondary_entry() {
+    // Set the local exception table.
+    configure_exceptions();
+
+    KERNEL_PAGE_TABLE.get().unwrap().bind_kernel();
+
+    // Set up the gic for local core
+    GIC.get().unwrap().local_init();
+    GIC.get().unwrap().enable_local_ppi(27);
+    Gic::set_local_priority(0xff);
+    Gic::enable_local_interrupts();
+
+    // Set up core's tiemr queue
+    let _ = TIMER_QUEUE.local().set(TimerQueue::new());
+
+    TIMER_QUEUE
+        .local()
+        .get()
+        .unwrap()
+        .enqueue(10_000, periodic_timer_handler, None);
+
+    create_local_idle_task();
+
+    // Allow ourselves to be interrupted by the next timer.
+    daifclr();
+
+    loop {
+        unsafe { asm!("wfi") };
+    }
+}
+
 pub static DEVICE_BUS: OnceSpinLock<DeviceBus> = OnceSpinLock::new();
 
 pub fn threaded_init(_arg: *mut ()) {
@@ -153,6 +178,13 @@ pub fn threaded_init(_arg: *mut ()) {
 
     static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 
+
+    bringup_core(1);
+
+    SCHEDULER
+        .get()
+        .unwrap()
+        .task_from_fn(fun_kernel_thread, core::ptr::null_mut());
     SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
     printk!("Kernel initialized\n");
@@ -162,4 +194,12 @@ pub fn threaded_init(_arg: *mut ()) {
             asm!("wfi");
         }
     }
+}
+
+fn fun_kernel_thread(_arg: *mut ()) {
+    printk!("1\n");
+    ms_sleep(1000);
+    printk!("2\n");
+    ms_sleep(1000);
+    printk!("3\n");
 }

@@ -36,7 +36,7 @@ impl WaitQueue {
     }
 
     pub fn enqueue(&self) {
-        let this_task = SCHEDULER.get().unwrap().task();
+        let this_task = SCHEDULER.get().unwrap().local_task();
         let mut wait_queue = self.queue.lock();
         if wait_queue.is_none() {
             *wait_queue = Some(List::new());
@@ -58,7 +58,7 @@ impl WaitQueue {
         let should_wait = f();
 
         if should_wait {
-            let this_task = SCHEDULER.get().unwrap().task();
+            let this_task = SCHEDULER.get().unwrap().local_task();
             if wait_queue.is_none() {
                 *wait_queue = Some(List::new());
             }

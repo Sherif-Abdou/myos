@@ -1,8 +1,8 @@
 use crate::{
     allocators::{KVec, kvec},
-    read_sysreg,
+    cpu_local, read_sysreg,
     sched::WaitQueue,
-    utils::{Arc, ArcAny, OnceSpinLock, SpinLock, expect_downcast_ref},
+    utils::{Arc, ArcAny, CpuLocal, OnceSpinLock, SpinLock, expect_downcast_ref},
     write_sysreg,
 };
 
@@ -60,7 +60,7 @@ impl ArmTimer {
     }
 }
 
-pub static TIMER_QUEUE: OnceSpinLock<TimerQueue> = OnceSpinLock::new();
+pub static TIMER_QUEUE: CpuLocal<OnceSpinLock<TimerQueue>> = cpu_local!(OnceSpinLock::new());
 
 pub struct TimerQueue {
     heap: SpinLock<TimerMinHeap<TimerItem>>,
@@ -213,7 +213,7 @@ impl<T: PartialOrd> TimerMinHeap<T> {
 pub fn us_sleep(delay_us: u64) {
     let wait_queue = Arc::new(WaitQueue::new());
 
-    TIMER_QUEUE.get().unwrap().enqueue(
+    TIMER_QUEUE.local().get().unwrap().enqueue(
         delay_us,
         |arg| {
             let wait_queue: &WaitQueue = expect_downcast_ref(arg);

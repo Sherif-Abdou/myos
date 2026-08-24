@@ -1,17 +1,11 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    allocators::kvec,
-    elf::ElfParser,
-    interrupts::{ExceptionRegisters, daifclr, daifset},
-    sched::{
+    allocators::kvec, cpu_local, elf::ElfParser, interrupts::{ExceptionRegisters, daifclr, daifset}, printk, sched::{
         STACK_SIZE, Task, TaskFdTable, TaskInfo, UserSpaceTaskInfo, create_kernel_stack,
         create_user_stack,
-    },
-    subsystem::ArmPageTableRoot,
-    utils::{
-        Arc, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc,
-        with_core_critical_section,
+    }, subsystem::ArmPageTableRoot, utils::{
+        Arc, CpuLocal, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc, cpu_id, with_core_critical_section,
     },
 };
 
@@ -36,12 +30,17 @@ pub fn init_scheduler() {
                 run_queue: SpinLock::new(List::new()),
                 blocked_queue: SpinLock::new(List::new()),
                 kill_queue: SpinLock::new(List::new()),
-                scheduled: SpinLock::new(None),
-                idle_task: SpinLock::new(None),
+                scheduled: cpu_local!(SpinLock::new(None)),
+                staging: cpu_local!(SpinLock::new(None)),
+                idle_task: cpu_local!(SpinLock::new(None)),
             })
             .is_ok(),
         "Couldn't initialize scheduler"
     );
+    create_local_idle_task();
+}
+
+pub fn create_local_idle_task() {
     SCHEDULER
         .get()
         .unwrap()
@@ -56,8 +55,9 @@ pub struct Sched {
     // Tasks to be killed on the next tick.
     kill_queue: SpinLock<List<Task>>,
     // Idle task
-    idle_task: SpinLock<Option<ListArc<Task, 0>>>,
-    scheduled: SpinLock<Option<Arc<Task>>>,
+    idle_task: CpuLocal<SpinLock<Option<ListArc<Task, 0>>>>,
+    staging: CpuLocal<SpinLock<Option<ListArc<Task, 0>>>>,
+    scheduled: CpuLocal<SpinLock<Option<Arc<Task>>>>,
 }
 
 #[unsafe(naked)]
@@ -121,7 +121,7 @@ pub fn sched_yield() {
             asm!("ldr {0}, =1f", out(reg) addr);
         }
 
-        let this_task = SCHEDULER.get().unwrap().task().unwrap();
+        let this_task = SCHEDULER.get().unwrap().local_task().unwrap();
 
         let mut regs = this_task.registers.lock();
         let reg_ptr = unsafe { regs.gprs.as_mut_ptr().add(18) };
@@ -153,16 +153,18 @@ fn threaded_idle(_arg: *mut ()) {
 }
 
 impl Sched {
-    pub fn task(&self) -> Option<Arc<Task>> {
-        self.scheduled.lock().as_ref().cloned()
+    pub fn local_task(&self) -> Option<Arc<Task>> {
+        self.scheduled.local().lock().as_ref().cloned()
     }
 
     pub fn block_this_task(&self) {
-        let task = self.task().unwrap();
+        with_core_critical_section(|| {
+            let task = self.staging.local().lock().take().unwrap();
 
-        let task = unsafe { self.run_queue.lock().remove_at(&task) };
+            // let task = unsafe { self.run_queue.lock().remove_at(&task) };
 
-        self.blocked_queue.lock().push_back(task);
+            self.blocked_queue.lock().push_back(task);
+        });
     }
 
     pub fn unblock_task(&self, task: &Arc<Task>) {
@@ -172,12 +174,10 @@ impl Sched {
     }
 
     pub fn end_task(&self) {
-        let mut tasks = self.run_queue.lock();
         let mut kill_queue = self.kill_queue.lock();
-        let mut current = self.scheduled.lock();
+        let mut current = self.staging.local().lock();
 
         if let Some(task) = current.take() {
-            let task = unsafe { tasks.remove_at(&task) };
             kill_queue.push_back(task);
         }
     }
@@ -285,11 +285,11 @@ impl Sched {
         registers.spsr = 0b0101;
         drop(registers);
 
-        *self.idle_task.lock() = Some(task.into());
+        *self.idle_task.local().lock() = Some(task.into());
     }
 
     pub fn save_register_state_to_task(&self, state: &ExceptionRegisters) {
-        let Some(task) = self.task() else {
+        let Some(task) = self.local_task() else {
             return;
         };
         let mut registers = task.registers.lock();
@@ -298,10 +298,17 @@ impl Sched {
 
     pub fn next_task(&self) -> Option<ExceptionRegisters> {
         let mut tasks = self.run_queue.lock();
+
+        let mut staging = self.staging.local().lock();
+
+        if let Some(staging) = staging.take() {
+            tasks.push_back(staging);
+        }
+
         let task = tasks.remove_front();
 
         if let Some(task) = task {
-            let mut scheduled = self.scheduled.lock();
+            let mut scheduled = self.scheduled.local().lock();
 
             if let TaskInfo::User(ref userspace) = *task.task_info {
                 userspace.page_table.lock().bind_user();
@@ -309,13 +316,15 @@ impl Sched {
 
             *scheduled = Some(task.clone_arc());
 
-            tasks.push_back(task);
+            *staging = Some(task);
+            //
+            // printk!("Scheduled a real task on core: {}\n", cpu_id());
 
             Some(scheduled.as_ref().unwrap().registers.lock().clone())
         } else {
             // Run the idle task.
-            let mut scheduled = self.scheduled.lock();
-            let idle = self.idle_task.lock();
+            let mut scheduled = self.scheduled.local().lock();
+            let idle = self.idle_task.local().lock();
             *scheduled = Some(idle.as_ref().unwrap().clone_arc());
 
             Some(scheduled.as_ref().unwrap().registers.lock().clone())

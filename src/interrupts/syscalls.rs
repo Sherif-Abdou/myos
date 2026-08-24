@@ -42,7 +42,7 @@ pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     } else {
         let buf = unsafe { slice::from_raw_parts(addr, len) };
 
-        let task = SCHEDULER.get().unwrap().task().unwrap();
+        let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
         let ret = task.user_fd_table().unwrap().write(descriptor, buf);
 
@@ -67,7 +67,7 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
             (*regs).gprs[0] = len as u64;
         }
     } else {
-        let task = SCHEDULER.get().unwrap().task().unwrap();
+        let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
         let ret = task.user_fd_table().unwrap().read(descriptor, buf);
 
@@ -86,7 +86,7 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let path = buf.to_str().unwrap();
 
-    let task = SCHEDULER.get().unwrap().task().unwrap();
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
     let inode = EXT2_FS.get().unwrap().open(path);
 
@@ -107,7 +107,7 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 pub fn close(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] };
 
-    let task = SCHEDULER.get().unwrap().task().unwrap();
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
     task.user_fd_table().unwrap().close(descriptor as usize);
 

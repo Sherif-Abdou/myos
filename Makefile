@@ -19,7 +19,7 @@ clean:
 
 ifeq ($(HOST_OS),Darwin)
 BASE_COMMAND:= qemu-system-aarch64 \
-		-M virt,accel=hvf,gic-version=3 -cpu host -smp 1 -m 4G \
+		-M virt,accel=hvf,gic-version=3 -cpu host -smp 2 -m 4G \
 		-display none \
 		-kernel $(OS_PATH) \
 		-no-reboot \
@@ -30,7 +30,7 @@ BASE_COMMAND:= qemu-system-aarch64 \
 		-serial chardev:ch0
 else
 BASE_COMMAND:=qemu-system-aarch64 \
-		-M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 4G \
+		-M virt,gic-version=3 -cpu cortex-a76 -smp 2 -m 4G \
 		-display none \
 		-kernel $(OS_PATH) \
 		-no-reboot \
@@ -43,7 +43,7 @@ endif
 
 virt.dtb: $(TARGET)
 	qemu-system-aarch64 \
-		-M virt,gic-version=3,dumpdtb=virt.dtb -cpu cortex-a76 -smp 1 -m 4G \
+		-M virt,gic-version=3,dumpdtb=virt.dtb -cpu cortex-a76 -smp 2 -m 4G \
 		-display none \
 		-no-reboot \
 		-global virtio-mmio.force-legacy=false \

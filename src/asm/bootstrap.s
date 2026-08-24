@@ -45,6 +45,37 @@ __enable_mmu:
     blr x1
     b _spin
 
+.global _secondary_start
+_secondary_start:
+    b __secondary_configure_pt
+
+__secondary_configure_pt:
+    ldr x2, =(0b010 << 32) | (0b10 << 30) | ((0b11001 << 16) | (0b11001) | (0b11 << 12) | (0b01) << 10 | (0b01) << 8)
+    msr tcr_el1, x2
+    adr x2, __initial_pt1
+    b __secondary_enable_mmu
+    
+# x2 is the top level base register
+__secondary_enable_mmu:
+    mov sp, x0
+    ldr x0, =0x00000000000004FF
+    msr mair_el1, x0
+    msr ttbr1_el1, x2
+    msr ttbr0_el1, x2
+    isb sy
+    mrs x2, sctlr_el1
+    orr x2, x2, #1
+    dc civac, x0
+    dsb ish
+    tlbi vmalle1is
+    dsb ish
+    isb sy
+    msr sctlr_el1, x2
+    isb sy
+    ldr x1, =secondary_entry 
+    blr x1
+    b _spin
+
 _spin:
     b _spin
 

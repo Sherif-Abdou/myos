@@ -6,6 +6,8 @@ use core::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
 };
 
+use crate::printk;
+
 /// Primitive Spinlock, provides synchronization between multiple cores.
 pub struct SpinLock<T> {
     inner: UnsafeCell<T>,

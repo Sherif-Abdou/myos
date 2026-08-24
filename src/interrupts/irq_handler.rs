@@ -4,11 +4,11 @@ use core::{
 };
 
 use crate::{
-    Gic, create_per_cpu_lock, early_printk,
+    Gic, cpu_local, create_per_cpu_lock, early_printk,
     interrupts::{daifset, syscalls::dispatch_syscall},
     printk, read_sysreg,
     sched::SCHEDULER,
-    utils::{ArcAny, PerCpuLock, SpinLock, with_core_critical_section},
+    utils::{ArcAny, CpuLocal, PerCpuLock, SpinLock, with_core_critical_section},
 };
 
 pub struct ReturnExceptionRegs {
@@ -48,10 +48,10 @@ pub static IRQ_TABLE: SpinLock<IrqTable> = SpinLock::new(IrqTable {
     irqs: [const { None }; 1024],
 });
 
-static IRQ_BOOL: AtomicBool = AtomicBool::new(false);
+static IRQ_BOOL: CpuLocal<AtomicBool> = cpu_local!(AtomicBool::new(false));
 
 pub fn can_block() -> bool {
-    !IRQ_BOOL.load(SeqCst)
+    !IRQ_BOOL.local().load(SeqCst)
 }
 
 pub struct IrqContext<'a> {
@@ -110,7 +110,7 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
         dispatch_syscall(regs)
     } else {
         let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
-        if let Some(task) = SCHEDULER.get().unwrap().task()
+        if let Some(task) = SCHEDULER.get().unwrap().local_task()
             && task.is_user_task()
             && interrupted_user
         {
@@ -213,7 +213,7 @@ extern "C" fn irq_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegi
     //     asm!("msr PAN, #0");
     // }
     let irq = Gic::acknowledge();
-    IRQ_BOOL.store(true, SeqCst);
+    IRQ_BOOL.local().store(true, SeqCst);
 
     SCHEDULER
         .get()
@@ -227,7 +227,7 @@ extern "C" fn irq_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegi
     Gic::complete(irq);
 
     let return_regs = RETURN_TABLE.lock().take().unwrap_or(regs);
-    IRQ_BOOL.store(false, SeqCst);
+    IRQ_BOOL.local().store(false, SeqCst);
 
     // Return to who we came from.
     return_regs
