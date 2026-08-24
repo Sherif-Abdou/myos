@@ -15,7 +15,7 @@ unsafe extern "C" {
 
 pub fn bringup_core(number: usize) {
     let stack = create_kernel_stack();
-    let stack_end = stack.phys_addr() + stack.len();
+    let stack_end = stack.virt_addr() + stack.len();
 
     let entry_addr = (&raw const _secondary_start).addr();
     if STACKS.get(number).set(stack).is_err() {

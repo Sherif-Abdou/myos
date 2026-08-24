@@ -11,7 +11,10 @@ use crate::{
     allocators::KERNEL_ALLOCATOR,
     dtb::FdtNode,
     impl_link,
-    utils::{Arc, List, ListLinks, OnceSpinLock, SpinLock, UniqueArc, with_core_critical_section},
+    utils::{
+        Arc, List, ListLinks, OnceSpinLock, PhysAddr, SpinLock, UniqueArc,
+        with_core_critical_section,
+    },
 };
 
 /// Bit 63 — AMEC (encrypted-memory context select, FEAT_MEC).
@@ -275,7 +278,7 @@ impl ArmDescriptorGroup {
 
     /// Returns the physical address of the descriptor group.
     pub fn phys_addr(&self) -> u64 {
-        (self.0.as_ptr().addr() as u64) & 0x7fffffffff
+        PhysAddr::from(self.0.as_ptr()).get() as u64
     }
 }
 
@@ -395,12 +398,12 @@ impl ArmPageTableRoot {
         }
     }
 
-    pub fn map_page_range(&self, virtual_addr: usize, phys_addr: usize, page_count: usize) {
-        assert!(phys_addr.is_multiple_of(4096));
+    pub fn map_page_range(&self, virtual_addr: usize, phys_addr: PhysAddr, page_count: usize) {
+        assert!(phys_addr.get().is_multiple_of(4096));
 
         for page in 0..page_count {
             let virtual_addr = virtual_addr + 4096 * page;
-            let phys_addr = phys_addr + 4096 * page;
+            let phys_addr = phys_addr.get() + 4096 * page;
 
             let handle = self.descriptor_for_vma_or_create(virtual_addr);
 
@@ -411,7 +414,7 @@ impl ArmPageTableRoot {
     /// Binds this page table as the kernel page table. This should really only be called once.
     pub fn bind_kernel(&self) {
         with_core_critical_section(|| {
-            let phys_addr = self.root_group.descriptors.lock().addr().get() & 0x7fffffffff;
+            let phys_addr = PhysAddr::from(*self.root_group.descriptors.lock()).get();
 
             unsafe {
                 asm!(r#"
@@ -432,7 +435,7 @@ impl ArmPageTableRoot {
     /// Binds this page table as the userspace page table.
     pub fn bind_user(&self) {
         with_core_critical_section(|| {
-            let phys_addr = self.root_group.descriptors.lock().addr().get() & 0x7fffffffff;
+            let phys_addr = PhysAddr::from(*self.root_group.descriptors.lock()).get();
 
             unsafe {
                 asm!(r#"

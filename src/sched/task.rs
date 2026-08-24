@@ -7,7 +7,7 @@ use crate::{
     interrupts::ExceptionRegisters,
     sched::Mutex,
     subsystem::{ArmPageTableRoot, Inode},
-    utils::{Arc, ListLinks, SpinLock},
+    utils::{Arc, ListLinks, PhysAddr, SpinLock},
 };
 
 pub(crate) const STACK_SIZE: usize = 4096 * 16;
@@ -16,8 +16,12 @@ pub(crate) const STACK_SIZE: usize = 4096 * 16;
 pub(crate) struct KernelTaskStack([u8; STACK_SIZE]);
 
 impl KernelTaskStack {
-    pub fn phys_addr(&self) -> usize {
-        self.0.as_ptr().addr() & 0x7fffffffff
+    pub fn phys_addr(&self) -> PhysAddr {
+        PhysAddr::from(self.0.as_ptr())
+    }
+
+    pub fn virt_addr(&self) -> usize {
+        self.0.as_ptr().addr()
     }
 
     pub fn len(&self) -> usize {
@@ -29,8 +33,8 @@ impl KernelTaskStack {
 pub(crate) struct UserTaskStack([u8; STACK_SIZE]);
 
 impl UserTaskStack {
-    pub fn phys_addr(&self) -> usize {
-        self.0.as_ptr().addr() & 0x7fffffffff
+    pub fn phys_addr(&self) -> PhysAddr {
+        PhysAddr::from(self.0.as_ptr())
     }
 
     pub fn len(&self) -> usize {

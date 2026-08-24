@@ -1,3 +1,4 @@
+mod addr;
 mod arc;
 mod core_lock;
 mod cpu_local;
@@ -7,6 +8,7 @@ mod mmio;
 mod spin_lock;
 mod string;
 
+pub use addr::PhysAddr;
 pub use arc::*;
 pub use core_lock::*;
 pub use cpu_local::*;

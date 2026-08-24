@@ -5,6 +5,7 @@ use alloc::alloc::Allocator;
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, align_up},
     elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
+    utils::PhysAddr,
 };
 
 pub trait ElfSource {
@@ -163,12 +164,12 @@ impl Segment {
         self.mem_size().div_ceil(4096)
     }
 
-    pub fn loaded_phys_addr(&self) -> usize {
-        let SegmentType::Loaded(ref ptr) = self.blob else {
+    pub fn loaded_phys_addr(&self) -> PhysAddr {
+        let SegmentType::Loaded(ptr) = self.blob else {
             todo!("Only support phys addr of loaded segment.")
         };
 
-        ptr.addr().get() & 0x7fffffffff
+        PhysAddr::from(ptr)
     }
 }
 
