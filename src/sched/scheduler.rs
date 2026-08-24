@@ -1,11 +1,19 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    allocators::kvec, cpu_local, elf::ElfParser, interrupts::{ExceptionRegisters, daifclr, daifset}, printk, sched::{
+    allocators::kvec,
+    cpu_local,
+    elf::ElfParser,
+    interrupts::{ExceptionRegisters, daifclr, daifset},
+    printk,
+    sched::{
         STACK_SIZE, Task, TaskFdTable, TaskInfo, UserSpaceTaskInfo, create_kernel_stack,
         create_user_stack,
-    }, subsystem::ArmPageTableRoot, utils::{
-        Arc, CpuLocal, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc, cpu_id, with_core_critical_section,
+    },
+    subsystem::ArmPageTableRoot,
+    utils::{
+        Arc, CpuLocal, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc, cpu_id,
+        with_core_critical_section,
     },
 };
 
@@ -168,9 +176,10 @@ impl Sched {
     }
 
     pub fn unblock_task(&self, task: &Arc<Task>) {
+        let mut run_queue = self.run_queue.lock();
         let task = unsafe { self.blocked_queue.lock().remove_at(task) };
 
-        self.run_queue.lock().push_back(task);
+        run_queue.push_back(task);
     }
 
     pub fn end_task(&self) {
@@ -319,12 +328,13 @@ impl Sched {
             *staging = Some(task);
             //
             // printk!("Scheduled a real task on core: {}\n", cpu_id());
+            let registers = scheduled.as_ref().unwrap().registers.lock();
 
-            Some(scheduled.as_ref().unwrap().registers.lock().clone())
+            Some(registers.clone())
         } else {
             // Run the idle task.
-            let mut scheduled = self.scheduled.local().lock();
             let idle = self.idle_task.local().lock();
+            let mut scheduled = self.scheduled.local().lock();
             *scheduled = Some(idle.as_ref().unwrap().clone_arc());
 
             Some(scheduled.as_ref().unwrap().registers.lock().clone())

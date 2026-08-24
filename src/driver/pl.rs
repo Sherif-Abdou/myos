@@ -34,7 +34,7 @@ fn irq_handler(driver: Option<&ArcAny>) {
         if driver.tx_wait_queue.is_empty() {
             driver.disable_tx_irq();
         } else {
-            driver.tx_wait_queue.unblock_front();
+            driver.tx_wait_queue.unblock_all();
         }
     }
     if status & (1 << 4) != 0 {

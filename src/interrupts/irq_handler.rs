@@ -110,9 +110,9 @@ extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
         dispatch_syscall(regs)
     } else {
         let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
-        if let Some(task) = SCHEDULER.get().unwrap().local_task()
+        if interrupted_user
+            && let Some(task) = SCHEDULER.get().unwrap().local_task()
             && task.is_user_task()
-            && interrupted_user
         {
             SCHEDULER.get().unwrap().end_task();
 

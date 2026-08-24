@@ -27,7 +27,17 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, create_local_idle_task, init_scheduler}, smp::bringup_core, subsystem::{EXT2_FS, Ext2Fs, KERNEL_PAGE_TABLE, build_kernel_page_table}, timer::{TIMER_QUEUE, TimerQueue, ms_sleep}, utils::{ArcAny, OnceSpinLock},
+    allocators::{KBox, kbox},
+    arm_pl::init_from_dtb_node,
+    driver::DeviceBus,
+    dtb::{Fdt, find_earlyconsole_node},
+    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
+    memory::init_allocator,
+    sched::{SCHEDULER, create_local_idle_task, init_scheduler},
+    smp::bringup_core,
+    subsystem::{EXT2_FS, Ext2Fs, KERNEL_PAGE_TABLE, build_kernel_page_table},
+    timer::{TIMER_QUEUE, TimerQueue, ms_sleep},
+    utils::{ArcAny, OnceSpinLock},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -178,13 +188,8 @@ pub fn threaded_init(_arg: *mut ()) {
 
     static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 
-
     bringup_core(1);
 
-    SCHEDULER
-        .get()
-        .unwrap()
-        .task_from_fn(fun_kernel_thread, core::ptr::null_mut());
     SCHEDULER.get().unwrap().load_program(ELF_FILE);
 
     printk!("Kernel initialized\n");
@@ -194,12 +199,4 @@ pub fn threaded_init(_arg: *mut ()) {
             asm!("wfi");
         }
     }
-}
-
-fn fun_kernel_thread(_arg: *mut ()) {
-    printk!("1\n");
-    ms_sleep(1000);
-    printk!("2\n");
-    ms_sleep(1000);
-    printk!("3\n");
 }

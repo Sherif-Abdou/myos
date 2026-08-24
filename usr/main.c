@@ -102,13 +102,7 @@ void shell(void) {
 }
 
 void _start(void) {
-    puts("a\n");
-    ms_sleep(1000);
-    puts("b\n");
-    ms_sleep(1000);
-    puts("c\n");
-
-    *(volatile int*)0x0;
+    shell();
 
     exit(0);
 }

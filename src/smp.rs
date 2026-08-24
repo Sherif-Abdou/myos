@@ -17,7 +17,7 @@ pub fn bringup_core(number: usize) {
     let stack = create_kernel_stack();
     let stack_end = stack.phys_addr() + stack.len();
 
-    let entry_addr = (&raw const _secondary_start).addr() & 0x7fffffffff;
+    let entry_addr = (&raw const _secondary_start).addr();
     if STACKS.get(number).set(stack).is_err() {
         return;
     };
