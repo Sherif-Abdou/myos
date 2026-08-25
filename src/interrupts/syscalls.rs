@@ -1,4 +1,4 @@
-use core::{ffi::CStr, str};
+use core::str;
 
 use alloc::slice;
 

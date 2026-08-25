@@ -1,11 +1,30 @@
 use core::arch::asm;
 
 use crate::{
-    early_printk, interrupts::{ExceptionRegisters, RETURN_TABLE, syscalls::dispatch_syscall}, per_cpu_lock, printk, read_sysreg, sched::SCHEDULER, utils::{PerCpuLock, with_core_critical_section}, write_sysreg,
+    early_printk,
+    interrupts::{ExceptionRegisters, RETURN_TABLE, syscalls::dispatch_syscall},
+    per_cpu_lock, printk, read_sysreg,
+    sched::SCHEDULER,
+    utils::{PerCpuLock, with_core_critical_section},
+    write_sysreg,
 };
 
 type SexcHandler = fn(*mut ExceptionRegisters) -> *const ExceptionRegisters;
 struct SexcTable([SexcHandler; 64]);
+
+fn with_uaccess<R, F: FnOnce() -> R>(func: F) -> R {
+    unsafe {
+        write_sysreg!(PAN, 0 << 22);
+    }
+
+    let ret = func();
+
+    unsafe {
+        write_sysreg!(PAN, 1 << 22);
+    }
+
+    ret
+}
 
 impl PerCpuLock<SexcTable> {
     pub fn dispatch(&self, ec: usize, regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
@@ -31,13 +50,15 @@ const fn create_sexc_table() -> SexcTable {
 
 pub fn copy_from_user(dst: &mut [u8], src: &[u8]) -> usize {
     with_core_critical_section(|| {
-        let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
+        with_uaccess(|| {
+            let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
 
-        let size = copy_from_user_inner(dst, src);
+            let size = copy_from_user_inner(dst, src);
 
-        let _ = SEXC_TABLE.set(0x25, old_func);
+            let _ = SEXC_TABLE.set(0x25, old_func);
 
-        size
+            size
+        })
     })
 }
 
@@ -72,13 +93,15 @@ fn copy_from_user_inner(dst: &mut [u8], src: &[u8]) -> usize {
 
 pub fn copy_to_user(dst: &mut [u8], src: &[u8]) -> usize {
     with_core_critical_section(|| {
-        let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
+        with_uaccess(|| {
+            let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
 
-        let size = copy_to_user_inner(dst, src);
+            let size = copy_to_user_inner(dst, src);
 
-        let _ = SEXC_TABLE.set(0x25, old_func);
+            let _ = SEXC_TABLE.set(0x25, old_func);
 
-        size
+            size
+        })
     })
 }
 
@@ -143,25 +166,19 @@ fn user_strlen_inner(src: *const u8) -> usize {
 
 pub fn user_strlen(src: *const u8) -> usize {
     with_core_critical_section(|| {
-        let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
+        with_uaccess(|| {
+            let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
 
-        let size = user_strlen_inner(src);
+            let size = user_strlen_inner(src);
 
-        let _ = SEXC_TABLE.set(0x25, old_func);
+            let _ = SEXC_TABLE.set(0x25, old_func);
 
-        size
+            size
+        })
     })
 }
 
 fn user_data_access_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    let far: u64;
-    unsafe {
-        read_sysreg!(far, FAR_EL1);
-    }
-    let elr: u64;
-    unsafe {
-        read_sysreg!(elr, ELR_EL1);
-    }
     let esr: u64;
     unsafe {
         read_sysreg!(esr, ESR_EL1);

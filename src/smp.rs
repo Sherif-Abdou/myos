@@ -2,7 +2,7 @@ use core::arch::asm;
 
 use crate::{
     allocators::KBox,
-    cpu_local, printk,
+    cpu_local,
     sched::{KernelTaskStack, create_kernel_stack},
     utils::{CpuLocal, OnceSpinLock},
 };

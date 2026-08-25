@@ -1,12 +1,7 @@
-use core::{
-    arch::asm,
-    sync::atomic::{AtomicBool, Ordering::SeqCst},
-};
+use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
 use crate::{
-    Gic, cpu_local, per_cpu_lock, early_printk,
-    interrupts::syscalls::dispatch_syscall,
-    printk, read_sysreg,
+    Gic, cpu_local, per_cpu_lock,
     sched::SCHEDULER,
     utils::{ArcAny, CpuLocal, PerCpuLock, SpinLock},
 };

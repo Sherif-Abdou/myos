@@ -5,14 +5,13 @@ use crate::{
     cpu_local,
     elf::ElfParser,
     interrupts::{ExceptionRegisters, daifclr, daifset},
-    printk,
     sched::{
         STACK_SIZE, Task, TaskFdTable, TaskInfo, UserSpaceTaskInfo, create_kernel_stack,
         create_user_stack,
     },
     subsystem::ArmPageTableRoot,
     utils::{
-        Arc, CpuLocal, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc, cpu_id,
+        Arc, CpuLocal, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc,
         with_core_critical_section,
     },
 };

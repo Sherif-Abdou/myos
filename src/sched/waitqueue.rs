@@ -1,6 +1,5 @@
 use crate::{
     impl_link,
-    interrupts::daifset,
     sched::{SCHEDULER, Task, sched_yield},
     utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
 };
