@@ -1,5 +1,6 @@
 mod gic;
 mod irq_handler;
+mod sexc_handler;
 mod syscalls;
 
 use core::arch::asm;

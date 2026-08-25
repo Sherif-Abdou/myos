@@ -3,7 +3,11 @@ use core::{ffi::CStr, str};
 use alloc::slice;
 
 use crate::{
-    interrupts::{ExceptionRegisters, RETURN_TABLE, daifset},
+    allocators::kbox_with_len,
+    interrupts::{
+        ExceptionRegisters, RETURN_TABLE, daifset,
+        sexc_handler::{copy_from_user, copy_to_user, user_strlen},
+    },
     printk,
     sched::SCHEDULER,
     subsystem::{CONSOLE, EXT2_FS, FileSystem},
@@ -26,13 +30,21 @@ impl Syscall {
     }
 }
 
+fn validate_user_address_range(addr: usize, len: usize) -> bool {
+    (addr < 0x7fffffffff) && (addr + len < 0x7fffffffff)
+}
+
 pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] } as usize;
     let addr = unsafe { (*regs).gprs[1] } as *mut u8;
     let len = unsafe { (*regs).gprs[2] } as usize;
 
+    let mut kernel_buf = kbox_with_len(len);
+
     if descriptor == 0 {
-        let str = unsafe { str::from_utf8(slice::from_raw_parts(addr, len)).unwrap() };
+        let user_buf = unsafe { slice::from_raw_parts(addr, len) };
+        let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
+        let str = str::from_utf8(&kernel_buf[..len]).unwrap();
 
         printk!("{}", str);
 
@@ -58,10 +70,14 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] } as usize;
     let addr = unsafe { (*regs).gprs[1] } as *mut u8;
     let len = unsafe { (*regs).gprs[2] } as usize;
-    let buf = unsafe { slice::from_raw_parts_mut(addr, len) };
+    let user_buf = unsafe { slice::from_raw_parts_mut(addr, len) };
+
+    let mut scratch = kbox_with_len(len);
 
     if descriptor == 1 {
-        let len = CONSOLE.get().unwrap().read(buf);
+        let len = CONSOLE.get().unwrap().read(&mut scratch);
+
+        let len = copy_to_user(&mut user_buf[..len], &scratch[..len]);
 
         unsafe {
             (*regs).gprs[0] = len as u64;
@@ -69,10 +85,19 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     } else {
         let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-        let ret = task.user_fd_table().unwrap().read(descriptor, buf);
+        let ret = task.user_fd_table().unwrap().read(descriptor, &mut scratch);
 
-        unsafe {
-            (*regs).gprs[0] = ret as u64;
+        if ret < 0 {
+            unsafe {
+                (*regs).gprs[0] = ret as u64;
+            }
+        } else {
+            let len = ret as usize;
+            let len = copy_to_user(&mut user_buf[..len], &scratch[..len]);
+
+            unsafe {
+                (*regs).gprs[0] = len as u64;
+            }
         }
     }
 
@@ -80,11 +105,16 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 }
 
 pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    let cstr_addr = unsafe { (*regs).gprs[0] } as *mut u8;
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as *mut u8;
+    let user_cstr_len = user_strlen(user_cstr_addr.cast_const());
 
-    let buf = unsafe { CStr::from_ptr(cstr_addr) };
+    let mut scratch = kbox_with_len(user_cstr_len);
 
-    let path = buf.to_str().unwrap();
+    copy_from_user(&mut scratch, unsafe {
+        slice::from_raw_parts_mut(user_cstr_addr, user_cstr_len)
+    });
+
+    let path = str::from_utf8(&scratch).unwrap();
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 

@@ -1,7 +1,7 @@
 mod ll;
-use core::ptr::NonNull;
+use core::{alloc::Layout, ptr::NonNull};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{alloc::Allocator, boxed::Box, vec::Vec};
 pub use ll::LLAllocator;
 
 struct FakeAllocator;
@@ -45,6 +45,18 @@ pub type KBox<T> = Box<T, &'static SpinLock<LLAllocator>>;
 
 pub fn kbox<T>(inner: T) -> KBox<T> {
     Box::new_in(inner, &KERNEL_ALLOCATOR)
+}
+
+pub fn kbox_with_len(len: usize) -> KBox<[u8]> {
+    unsafe {
+        Box::from_raw_in(
+            KERNEL_ALLOCATOR
+                .allocate(Layout::from_size_align(len, 8).unwrap())
+                .unwrap()
+                .as_ptr(),
+            &KERNEL_ALLOCATOR,
+        )
+    }
 }
 
 pub type KVec<T> = Vec<T, &'static SpinLock<LLAllocator>>;

@@ -4,11 +4,11 @@ use core::{
 };
 
 use crate::{
-    Gic, cpu_local, create_per_cpu_lock, early_printk,
-    interrupts::{daifset, syscalls::dispatch_syscall},
+    Gic, cpu_local, per_cpu_lock, early_printk,
+    interrupts::syscalls::dispatch_syscall,
     printk, read_sysreg,
     sched::SCHEDULER,
-    utils::{ArcAny, CpuLocal, PerCpuLock, SpinLock, with_core_critical_section},
+    utils::{ArcAny, CpuLocal, PerCpuLock, SpinLock},
 };
 
 pub struct ReturnExceptionRegs {
@@ -42,7 +42,7 @@ impl ReturnExceptionRegs {
 }
 
 pub static RETURN_TABLE: PerCpuLock<ReturnExceptionRegs> =
-    create_per_cpu_lock!(ReturnExceptionRegs::new());
+    per_cpu_lock!(ReturnExceptionRegs::new());
 
 pub static IRQ_TABLE: SpinLock<IrqTable> = SpinLock::new(IrqTable {
     irqs: [const { None }; 1024],
@@ -89,129 +89,7 @@ pub struct ExceptionRegisters {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    early_printk!("EXCEPTION: \n");
-    let far: u64;
-    unsafe {
-        read_sysreg!(far, FAR_EL1);
-    }
-    let elr: u64;
-    unsafe {
-        read_sysreg!(elr, ELR_EL1);
-    }
-    let esr: u64;
-    unsafe {
-        read_sysreg!(esr, ESR_EL1);
-    }
-
-    let ec = (esr >> 26) & 0x3f;
-
-    if ec == 0x15 {
-        dispatch_syscall(regs)
-    } else {
-        let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
-        if interrupted_user
-            && let Some(task) = SCHEDULER.get().unwrap().local_task()
-            && task.is_user_task()
-        {
-            SCHEDULER.get().unwrap().end_task();
-
-            daifset();
-            RETURN_TABLE
-                .lock()
-                .put(&SCHEDULER.get().unwrap().next_task().unwrap());
-
-            RETURN_TABLE.lock().take().unwrap()
-        } else {
-            dispatch_kernel_panic(regs, far, elr, esr, ec)
-        }
-    }
-}
-
-fn dispatch_kernel_panic(
-    regs: *mut ExceptionRegisters,
-    far: u64,
-    elr: u64,
-    esr: u64,
-    ec: u64,
-) -> ! {
-    printk!(
-        "EXCEPTION at 0x{:x}, FAR 0x{:x}, ESR 0x{:x} \n",
-        elr,
-        far,
-        esr
-    );
-    unsafe {
-        printk!("x0: {:x}\n", (*regs).gprs[0]);
-        printk!("x1: {:x}\n", (*regs).gprs[1]);
-        printk!("x2: {:x}\n", (*regs).gprs[2]);
-        printk!("x3: {:x}\n", (*regs).gprs[3]);
-        printk!("x4: {:x}\n", (*regs).gprs[4]);
-        printk!("x5: {:x}\n", (*regs).gprs[5]);
-        printk!("x6: {:x}\n", (*regs).gprs[6]);
-        printk!("x7: {:x}\n", (*regs).gprs[7]);
-        printk!("x8: {:x}\n", (*regs).gprs[8]);
-        printk!("x9: {:x}\n", (*regs).gprs[9]);
-        printk!("x10: {:x}\n", (*regs).gprs[10]);
-        printk!("x11: {:x}\n", (*regs).gprs[11]);
-        printk!("x12: {:x}\n", (*regs).gprs[12]);
-        printk!("x13: {:x}\n", (*regs).gprs[13]);
-        printk!("x14: {:x}\n", (*regs).gprs[14]);
-        printk!("x15: {:x}\n", (*regs).gprs[15]);
-        printk!("x16: {:x}\n", (*regs).gprs[16]);
-        printk!("x17: {:x}\n", (*regs).gprs[17]);
-        printk!("x18: {:x}\n", (*regs).gprs[18]);
-        printk!("x19: {:x}\n", (*regs).gprs[19]);
-        printk!("x20: {:x}\n", (*regs).gprs[20]);
-        printk!("x21: {:x}\n", (*regs).gprs[21]);
-        printk!("x22: {:x}\n", (*regs).gprs[22]);
-        printk!("x23: {:x}\n", (*regs).gprs[23]);
-        printk!("x24: {:x}\n", (*regs).gprs[24]);
-        printk!("x25: {:x}\n", (*regs).gprs[25]);
-        printk!("x26: {:x}\n", (*regs).gprs[28]);
-        printk!("x27: {:x}\n", (*regs).gprs[27]);
-        printk!("x28: {:x}\n", (*regs).gprs[28]);
-        printk!("x29: {:x}\n", (*regs).gprs[29]);
-        printk!("x30: {:x}\n", (*regs).gprs[30]);
-        printk!("sp: {:x}\n", (*regs).gprs[31]);
-    }
-
-    match ec {
-        0x1 => {
-            printk!("Trapped WF* Instruction\n");
-        }
-        0x3 => {
-            printk!("Trapped MCR or MRC\n");
-        }
-        0x7 => {
-            printk!("Trapped FPU\n");
-        }
-        0xd => {
-            printk!("Branch target exception\n");
-        }
-        0xe => {
-            printk!("Illegal execution state\n");
-        }
-        0x15 => {
-            printk!("Trapped SVC\n");
-        }
-        _ => {
-            printk!("EC: {:x}\n", ec);
-        }
-    }
-
-    loop {
-        unsafe {
-            asm!("wfi");
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
 extern "C" fn irq_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    // unsafe {
-    //     asm!("msr PAN, #0");
-    // }
     let irq = Gic::acknowledge();
     IRQ_BOOL.local().store(true, SeqCst);
 

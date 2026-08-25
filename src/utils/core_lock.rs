@@ -128,7 +128,7 @@ pub struct PerCpuLock<T> {
 }
 
 #[macro_export]
-macro_rules! create_per_cpu_lock {
+macro_rules! per_cpu_lock {
     ($val:expr) => {
         $crate::utils::PerCpuLock::new(
             [const { ::core::mem::MaybeUninit::new($crate::utils::CoreLock::new($val)) }; _],

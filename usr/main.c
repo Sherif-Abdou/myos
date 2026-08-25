@@ -42,6 +42,12 @@ int read(int fd, char *str, long len) {
     return syscall(1, fd, (long long)str, len, 0, 0, 0, 0, 0);
 }
 
+int open(const char *path) {
+    return syscall(8, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+}
+
+int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
+
 int puts(const char *str) {
     write(0, str, strlen(str));
     return 0;
@@ -60,9 +66,7 @@ int ns_sleep(long long delay_ns) {
     return 0;
 }
 
-int ms_sleep(long long delay_ms) {
-    ns_sleep(delay_ms * 1000000);
-}
+int ms_sleep(long long delay_ms) { ns_sleep(delay_ms * 1000000); }
 
 void exit(int code) {
     syscall(50, code, 0, 0, 0, 0, 0, 0, 0);
@@ -102,7 +106,23 @@ void shell(void) {
 }
 
 void _start(void) {
-    shell();
+    puts("hello world\n");
+    const char *addr = "hello land\n";
+    write(0, (const char *)0x8, 4);
+
+    int fd = open("hi.txt");
+
+    char buf[64];
+    buf[63] = 0;
+
+    if (fd < 0) {
+        puts("ahhh\n");
+    } else {
+        int len = read(fd, buf, 63);
+
+        puts(buf);
+        close(fd);
+    }
 
     exit(0);
 }
