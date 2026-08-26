@@ -46,6 +46,10 @@ int open(const char *path) {
     return syscall(8, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }
 
+int exec(const char *path) {
+    return syscall(22, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+}
+
 int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
 
 int fork() { return syscall(20, 0, 0, 0, 0, 0, 0, 0, 0); }
@@ -110,7 +114,6 @@ void shell(void) {
 void _start(void) {
     int ret = fork();
     if (ret == 0) {
-        puts("0\n");
         const char *addr = "hello land\n";
         write(0, (const char *)0x8, 4);
 
@@ -128,13 +131,7 @@ void _start(void) {
             close(fd);
         }
     } else {
-        ms_sleep(100);
-        puts("1\n");
-        puts("2\n");
-        puts("3\n");
-        ms_sleep(1000);
-        puts("4\n");
-        puts("5\n");
+        exec("main");
     }
 
     exit(0);

@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec},
-    elf::Segment,
+    elf::{ElfParser, ElfSource, Segment},
     impl_link,
     interrupts::ExceptionRegisters,
     printk,
@@ -63,9 +63,9 @@ impl UserTaskStack {
 
 pub struct UserSpaceProcess {
     pub(crate) page_table: SpinLock<ArmPageTableRoot>,
-    pub(crate) user_stack: KBox<UserTaskStack>,
+    pub(crate) user_stack: SpinLock<KBox<UserTaskStack>>,
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
-    pub(crate) segments: KVec<Segment>,
+    pub(crate) segments: SpinLock<KVec<Segment>>,
     pub(crate) fds: TaskFdTable,
 }
 
@@ -73,9 +73,9 @@ impl UserSpaceProcess {
     fn fork(&self) -> UserSpaceProcess {
         let new_page_table = ArmPageTableRoot::create_user();
 
-        let new_segments = self.segments.clone();
+        let new_segments = self.segments.lock().clone();
 
-        let new_user_stack = UserTaskStack::clone_box(&self.user_stack);
+        let new_user_stack = UserTaskStack::clone_box(&self.user_stack.lock());
         let new_kernel_stack = KernelTaskStack::clone_box(&self.kernel_stack);
         let new_fds = self.fds.fork();
 
@@ -97,9 +97,9 @@ impl UserSpaceProcess {
 
         UserSpaceProcess {
             page_table: SpinLock::new(new_page_table),
-            user_stack: new_user_stack,
+            user_stack: SpinLock::new(new_user_stack),
             kernel_stack: new_kernel_stack,
-            segments: new_segments,
+            segments: SpinLock::new(new_segments),
             fds: new_fds,
         }
     }
@@ -124,6 +124,42 @@ pub enum Process {
 }
 
 impl Process {
+    pub fn exec<S: ElfSource>(&self, parser: &ElfParser<S>) {
+        let Process::User(user_process) = self else {
+            return;
+        };
+
+        let num_segments = parser.num_segments();
+
+        let mut segments = kvec();
+        let page_table = ArmPageTableRoot::create_user();
+
+        let user_stack = create_user_stack();
+
+        for index in 0..num_segments {
+            let segment = parser.segment(index);
+            if !segment.is_null() {
+                let phys_addr = segment.loaded_phys_addr();
+                let virt_addr = segment.virt_addr() & !0xfff;
+                let pages = segment.mem_page_count();
+
+                page_table.map_page_range(virt_addr, phys_addr, pages);
+
+                segments.push(segment);
+            }
+        }
+
+        page_table.map_page_range(
+            STACK_VIRTUAL_ADDR,
+            user_stack.phys_addr(),
+            user_stack.len().div_ceil(4096),
+        );
+
+        *user_process.page_table.lock() = page_table;
+        *user_process.segments.lock() = segments;
+        *user_process.user_stack.lock() = user_stack;
+    }
+
     pub fn new_kernel(stack: KBox<KernelTaskStack>) -> Self {
         Self::Kernel(KernelSpaceProcess {
             kernel_stack: stack,
@@ -174,13 +210,41 @@ impl Task {
         SCHEDULER.get().unwrap().append_task(new_task);
     }
 
+    pub fn exec(&self, elf: impl ElfSource) -> ExceptionRegisters {
+        let parser = ElfParser::new(elf);
+
+        self.process.exec(&parser);
+
+        let mut registers = self.registers.lock();
+        registers.elr = parser.entry_vma() as u64;
+        registers.sp_el0 = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64;
+
+        assert!(
+            registers.gprs[31].is_multiple_of(16),
+            "Stack ptr is not aligned"
+        );
+        registers.spsr = 0b0000;
+        let copied = registers.clone();
+        drop(registers);
+        copied
+    }
+
+    pub fn bind_pages(&self) {
+        match *self.process {
+            Process::Kernel(_) => {}
+            Process::User(ref user_space_process) => {
+                user_space_process.page_table.lock().bind_user();
+            }
+        }
+    }
+
     pub fn stack_top(&self) -> u64 {
         match *self.process {
             Process::Kernel(ref kernel_space_task_info) => {
                 kernel_space_task_info.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
             }
             Process::User(ref user_space_task_info) => {
-                user_space_task_info.user_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
+                user_space_task_info.user_stack.lock().0.as_ptr().addr() as u64 + STACK_SIZE as u64
             }
         }
     }

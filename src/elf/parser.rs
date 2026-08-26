@@ -5,6 +5,7 @@ use alloc::alloc::Allocator;
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, align_up},
     elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
+    subsystem::Inode,
     utils::PhysAddr,
 };
 
@@ -27,6 +28,13 @@ impl ElfSource for KBox<[u8]> {
 impl<T: ElfSource> ElfSource for &T {
     fn read(&self, offset: usize, buf: &mut [u8]) {
         (*self).read(offset, buf)
+    }
+}
+
+impl ElfSource for &Inode {
+    fn read(&self, offset: usize, buf: &mut [u8]) {
+        // TODO: error handle
+        let _ = Inode::read(self, offset as u64, buf);
     }
 }
 

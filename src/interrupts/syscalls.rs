@@ -134,6 +134,36 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as *mut u8;
+    let user_cstr_len = user_strlen(user_cstr_addr.cast_const());
+
+    let mut scratch = kbox_with_len(user_cstr_len);
+
+    copy_from_user(&mut scratch, unsafe {
+        slice::from_raw_parts_mut(user_cstr_addr, user_cstr_len)
+    });
+
+    let path = str::from_utf8(&scratch).unwrap();
+
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    let inode = EXT2_FS.get().unwrap().open(path);
+
+    if let Ok(inode) = inode {
+        let new_regs = task.exec(&*inode);
+        task.bind_pages();
+
+        unsafe { (*regs) = new_regs };
+    } else {
+        unsafe {
+            (*regs).gprs[0] = (-1i64) as u64;
+        }
+    }
+
+    regs
+}
+
 pub fn close(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] };
 
@@ -152,6 +182,7 @@ pub fn exit(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     SCHEDULER.get().unwrap().end_task();
 
     daifset();
+    // TODO: Use a separate sexc table
     RETURN_TABLE
         .lock()
         .put(&SCHEDULER.get().unwrap().next_task().unwrap());
@@ -192,6 +223,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[11] = Syscall::new(close);
     table[17] = Syscall::new(nanosleep);
     table[20] = Syscall::new(fork);
+    table[22] = Syscall::new(exec);
     table[50] = Syscall::new(exit);
 
     table
@@ -204,7 +236,6 @@ pub fn dispatch_syscall(regs: *mut ExceptionRegisters) -> *const ExceptionRegist
         .get()
         .unwrap()
         .save_register_state_to_task(unsafe { regs.as_ref().unwrap() });
-
 
     let num = unsafe { (*regs).gprs[8] };
     let call = &SYSCALL_TABLE[num as usize];

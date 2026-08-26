@@ -6,7 +6,7 @@ use crate::{
     elf::ElfParser,
     interrupts::{ExceptionRegisters, daifclr, daifset},
     sched::{
-        STACK_SIZE, Task, TaskFdTable, Process, UserSpaceProcess, create_kernel_stack,
+        Process, STACK_SIZE, Task, TaskFdTable, UserSpaceProcess, create_kernel_stack,
         create_user_stack,
     },
     subsystem::ArmPageTableRoot,
@@ -222,7 +222,6 @@ impl Sched {
     }
 
     pub fn load_program(&self, elf: &[u8]) {
-
         let parser = ElfParser::new(elf);
 
         let num_segments = parser.num_segments();
@@ -253,8 +252,8 @@ impl Sched {
 
         let userspace = UserSpaceProcess {
             page_table: SpinLock::new(page_table),
-            segments,
-            user_stack,
+            segments: SpinLock::new(segments),
+            user_stack: SpinLock::new(user_stack),
             kernel_stack: create_kernel_stack(),
             fds: TaskFdTable::new(),
         };
@@ -325,15 +324,12 @@ impl Sched {
         if let Some(task) = task {
             let mut scheduled = self.scheduled.local().lock();
 
-            if let Process::User(ref userspace) = *task.process {
-                userspace.page_table.lock().bind_user();
-            }
+            task.bind_pages();
 
             *scheduled = Some(task.clone_arc());
 
             *staging = Some(task);
-            //
-            // printk!("Scheduled a real task on core: {}\n", cpu_id());
+
             let registers = scheduled.as_ref().unwrap().registers.lock();
 
             Some(registers.clone())
