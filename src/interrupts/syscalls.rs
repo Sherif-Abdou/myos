@@ -171,6 +171,18 @@ pub fn nanosleep(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn fork(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    task.fork_process();
+
+    unsafe {
+        (*regs).gprs[0] = 1;
+    }
+
+    regs
+}
+
 const fn build_syscall_table() -> [Syscall; 100] {
     let mut table = [const { Syscall::empty() }; 100];
 
@@ -179,6 +191,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[8] = Syscall::new(open);
     table[11] = Syscall::new(close);
     table[17] = Syscall::new(nanosleep);
+    table[20] = Syscall::new(fork);
     table[50] = Syscall::new(exit);
 
     table
@@ -187,6 +200,12 @@ const fn build_syscall_table() -> [Syscall; 100] {
 static SYSCALL_TABLE: &[Syscall] = &build_syscall_table();
 
 pub fn dispatch_syscall(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    SCHEDULER
+        .get()
+        .unwrap()
+        .save_register_state_to_task(unsafe { regs.as_ref().unwrap() });
+
+
     let num = unsafe { (*regs).gprs[8] };
     let call = &SYSCALL_TABLE[num as usize];
 

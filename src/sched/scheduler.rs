@@ -6,7 +6,7 @@ use crate::{
     elf::ElfParser,
     interrupts::{ExceptionRegisters, daifclr, daifset},
     sched::{
-        STACK_SIZE, Task, TaskFdTable, TaskInfo, UserSpaceTaskInfo, create_kernel_stack,
+        STACK_SIZE, Task, TaskFdTable, Process, UserSpaceProcess, create_kernel_stack,
         create_user_stack,
     },
     subsystem::ArmPageTableRoot,
@@ -17,6 +17,8 @@ use crate::{
 };
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
+
+pub const STACK_VIRTUAL_ADDR: usize = 0x800000;
 
 extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
     f(arg);
@@ -164,6 +166,12 @@ impl Sched {
         self.scheduled.local().lock().as_ref().cloned()
     }
 
+    pub fn append_task(&self, task: impl Into<ListArc<Task, 0>>) {
+        let mut run_queue = self.run_queue.lock();
+
+        run_queue.push_back(task.into());
+    }
+
     pub fn block_this_task(&self) {
         with_core_critical_section(|| {
             let task = self.staging.local().lock().take().unwrap();
@@ -195,7 +203,7 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            task_info: Arc::new(TaskInfo::new_kernel(create_kernel_stack())),
+            process: Arc::new(Process::new_kernel(create_kernel_stack())),
         });
 
         let mut registers = task.registers.lock();
@@ -214,7 +222,6 @@ impl Sched {
     }
 
     pub fn load_program(&self, elf: &[u8]) {
-        const STACK_VIRTUAL_ADDR: usize = 0x800000;
 
         let parser = ElfParser::new(elf);
 
@@ -244,7 +251,7 @@ impl Sched {
             user_stack.len().div_ceil(4096),
         );
 
-        let userspace = UserSpaceTaskInfo {
+        let userspace = UserSpaceProcess {
             page_table: SpinLock::new(page_table),
             segments,
             user_stack,
@@ -255,7 +262,7 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            task_info: Arc::new(TaskInfo::User(userspace)),
+            process: Arc::new(Process::User(userspace)),
         });
 
         let mut registers = task.registers.lock();
@@ -278,7 +285,7 @@ impl Sched {
         let task = UniqueArc::new(Task {
             registers: SpinLock::new(ExceptionRegisters::default()),
             links: ListLinks::new(),
-            task_info: Arc::new(TaskInfo::new_kernel(create_kernel_stack())),
+            process: Arc::new(Process::new_kernel(create_kernel_stack())),
         });
 
         let mut registers = task.registers.lock();
@@ -318,7 +325,7 @@ impl Sched {
         if let Some(task) = task {
             let mut scheduled = self.scheduled.local().lock();
 
-            if let TaskInfo::User(ref userspace) = *task.task_info {
+            if let Process::User(ref userspace) = *task.process {
                 userspace.page_table.lock().bind_user();
             }
 

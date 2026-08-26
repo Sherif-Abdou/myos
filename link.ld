@@ -56,10 +56,10 @@ SECTIONS
 
       __kernel_end = .;
 
-    /DISCARD/ : {
-        *(.eh_frame)
-        *(.eh_frame_hdr)
-    }
+    /* /DISCARD/ : { */
+    /*     *(.eh_frame) */
+    /*     *(.eh_frame_hdr) */
+    /* } */
 }
 
 __kernel_size = __kernel_end - __kernel_start;

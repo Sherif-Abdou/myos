@@ -44,6 +44,36 @@ pub enum SegmentType {
 unsafe impl Sync for SegmentType {}
 unsafe impl Send for SegmentType {}
 
+impl Clone for SegmentType {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Loaded(original) => {
+                let copy = KERNEL_ALLOCATOR
+                    .allocate_zeroed(Self::layout(original.len()))
+                    .unwrap();
+
+                unsafe {
+                    (*copy.as_ptr()).copy_from_slice(original.as_ptr().as_ref().unwrap());
+                }
+
+                SegmentType::Loaded(copy)
+            }
+            Self::Zeroed(original) => {
+                let copy = KERNEL_ALLOCATOR
+                    .allocate_zeroed(Self::layout(original.len()))
+                    .unwrap();
+
+                unsafe {
+                    (*copy.as_ptr()).copy_from_slice(original.as_ptr().as_ref().unwrap());
+                }
+
+                SegmentType::Zeroed(copy)
+            }
+            Self::Null => Self::Null,
+        }
+    }
+}
+
 impl SegmentType {
     const fn layout(len: usize) -> Layout {
         unsafe { Layout::from_size_align_unchecked(len, 4096) }
@@ -115,6 +145,7 @@ impl Drop for SegmentType {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SegmentPermissions(u32);
 
 impl SegmentPermissions {
@@ -139,6 +170,7 @@ impl SegmentPermissions {
     }
 }
 
+#[derive(Clone)]
 pub struct Segment {
     blob: SegmentType,
     vaddr: usize,

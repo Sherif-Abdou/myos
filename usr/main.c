@@ -48,6 +48,8 @@ int open(const char *path) {
 
 int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
 
+int fork() { return syscall(20, 0, 0, 0, 0, 0, 0, 0, 0); }
+
 int puts(const char *str) {
     write(0, str, strlen(str));
     return 0;
@@ -106,22 +108,33 @@ void shell(void) {
 }
 
 void _start(void) {
-    puts("hello world\n");
-    const char *addr = "hello land\n";
-    write(0, (const char *)0x8, 4);
+    int ret = fork();
+    if (ret == 0) {
+        puts("0\n");
+        const char *addr = "hello land\n";
+        write(0, (const char *)0x8, 4);
 
-    int fd = open("hi.txt");
+        int fd = open("hi.txt");
 
-    char buf[64];
-    buf[63] = 0;
+        char buf[64];
+        buf[63] = 0;
 
-    if (fd < 0) {
-        puts("ahhh\n");
+        if (fd < 0) {
+            puts("ahhh\n");
+        } else {
+            int len = read(fd, buf, 63);
+
+            puts(buf);
+            close(fd);
+        }
     } else {
-        int len = read(fd, buf, 63);
-
-        puts(buf);
-        close(fd);
+        ms_sleep(100);
+        puts("1\n");
+        puts("2\n");
+        puts("3\n");
+        ms_sleep(1000);
+        puts("4\n");
+        puts("5\n");
     }
 
     exit(0);
