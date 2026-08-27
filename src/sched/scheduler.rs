@@ -1,36 +1,15 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    allocators::kvec,
     cpu_local,
-    elf::ElfParser,
     interrupts::{ExceptionRegisters, daifclr, daifset},
-    sched::{
-        Process, STACK_SIZE, Task, TaskFdTable, UserSpaceProcess, create_kernel_stack,
-        create_user_stack,
-    },
-    subsystem::ArmPageTableRoot,
-    utils::{
-        Arc, CpuLocal, List, ListArc, ListLinks, OnceSpinLock, SpinLock, UniqueArc,
-        with_core_critical_section,
-    },
+    sched::Task,
+    utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
 };
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
 
 pub const STACK_VIRTUAL_ADDR: usize = 0x800000;
-
-extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
-    f(arg);
-
-    SCHEDULER.get().unwrap().end_task();
-
-    let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
-
-    with_core_critical_section(|| {
-        restore_regs_and_eret(&raw const next_task);
-    });
-}
 
 pub fn init_scheduler() {
     assert!(
@@ -91,7 +70,7 @@ extern "C" fn save_callee_regs(dst: *mut u64, new_pc: usize) {
 }
 
 #[unsafe(naked)]
-extern "C" fn restore_regs_and_eret(regs: *const ExceptionRegisters) {
+pub(crate) extern "C" fn restore_regs_and_eret(regs: *const ExceptionRegisters) {
     naked_asm!(
         r#"
     ldp x8, x9, [x0, 0x110]
@@ -200,104 +179,20 @@ impl Sched {
 
     #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
     pub fn task_from_fn(&self, f: fn(*mut ()), arg: *mut ()) {
-        let task = UniqueArc::new(Task {
-            registers: SpinLock::new(ExceptionRegisters::default()),
-            links: ListLinks::new(),
-            process: Arc::new(Process::new_kernel(create_kernel_stack())),
-        });
-
-        let mut registers = task.registers.lock();
-        registers.elr = (thread_wrapper) as u64;
-        registers.gprs[0] = (f as usize) as u64;
-        registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.stack_top();
-        assert!(
-            registers.gprs[31].is_multiple_of(16),
-            "Stack ptr is not aligned"
-        );
-        registers.spsr = 0b0101;
-        drop(registers);
+        let task = Task::kernel_task_from_fn(f, arg);
 
         self.run_queue.lock().push_back(task.into());
     }
 
     pub fn load_program(&self, elf: &[u8]) {
-        let parser = ElfParser::new(elf);
-
-        let num_segments = parser.num_segments();
-
-        let mut segments = kvec();
-        let page_table = ArmPageTableRoot::create_user();
-
-        let user_stack = create_user_stack();
-
-        for index in 0..num_segments {
-            let segment = parser.segment(index);
-            if !segment.is_null() {
-                let phys_addr = segment.loaded_phys_addr();
-                let virt_addr = segment.virt_addr() & !0xfff;
-                let pages = segment.mem_page_count();
-
-                page_table.map_page_range(virt_addr, phys_addr, pages);
-
-                segments.push(segment);
-            }
-        }
-
-        page_table.map_page_range(
-            STACK_VIRTUAL_ADDR,
-            user_stack.phys_addr(),
-            user_stack.len().div_ceil(4096),
-        );
-
-        let userspace = UserSpaceProcess {
-            page_table: SpinLock::new(page_table),
-            segments: SpinLock::new(segments),
-            user_stack: SpinLock::new(user_stack),
-            kernel_stack: create_kernel_stack(),
-            fds: TaskFdTable::new(),
-        };
-
-        let task = UniqueArc::new(Task {
-            registers: SpinLock::new(ExceptionRegisters::default()),
-            links: ListLinks::new(),
-            process: Arc::new(Process::User(userspace)),
-        });
-
-        let mut registers = task.registers.lock();
-        registers.elr = parser.entry_vma() as u64;
-        registers.gprs[31] = task.kernel_stack_top();
-        registers.sp_el0 = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64;
-
-        assert!(
-            registers.gprs[31].is_multiple_of(16),
-            "Stack ptr is not aligned"
-        );
-        registers.spsr = 0b0000;
-        drop(registers);
+        let task = Task::load_program(elf);
 
         self.run_queue.lock().push_back(task.into());
     }
 
     #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
     pub fn idle_task_from_fn(&self, f: fn(*mut ()), arg: *mut ()) {
-        let task = UniqueArc::new(Task {
-            registers: SpinLock::new(ExceptionRegisters::default()),
-            links: ListLinks::new(),
-            process: Arc::new(Process::new_kernel(create_kernel_stack())),
-        });
-
-        let mut registers = task.registers.lock();
-        registers.elr = (thread_wrapper) as u64;
-        registers.gprs[0] = (f as usize) as u64;
-        registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.stack_top();
-        assert!(
-            registers.gprs[31].is_multiple_of(16),
-            "Stack ptr is not aligned"
-        );
-        registers.spsr = 0b0101;
-        drop(registers);
+        let task = Task::kernel_task_from_fn(f, arg);
 
         *self.idle_task.local().lock() = Some(task.into());
     }

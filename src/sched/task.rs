@@ -5,11 +5,22 @@ use crate::{
     elf::{ElfParser, ElfSource, Segment},
     impl_link,
     interrupts::ExceptionRegisters,
-    printk,
-    sched::{Mutex, SCHEDULER, STACK_VIRTUAL_ADDR},
+    sched::{Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, restore_regs_and_eret},
     subsystem::{ArmPageTableRoot, Inode},
-    utils::{Arc, ListLinks, PhysAddr, SpinLock, UniqueArc},
+    utils::{Arc, ListLinks, PhysAddr, SpinLock, UniqueArc, with_core_critical_section},
 };
+
+extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
+    f(arg);
+
+    SCHEDULER.get().unwrap().end_task();
+
+    let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
+
+    with_core_critical_section(|| {
+        restore_regs_and_eret(&raw const next_task);
+    });
+}
 
 pub(crate) const STACK_SIZE: usize = 4096 * 16;
 
@@ -177,7 +188,8 @@ impl Process {
 #[repr(align(16))]
 pub struct Task {
     pub(crate) registers: SpinLock<ExceptionRegisters>,
-    pub(crate) links: ListLinks,
+    pub(crate) run_queue_links: ListLinks,
+    pub(crate) parent_links: ListLinks,
     pub(crate) process: Arc<Process>,
 }
 
@@ -203,7 +215,8 @@ impl Task {
 
         let new_task = UniqueArc::new(Task {
             registers: SpinLock::new(new_registers),
-            links: ListLinks::new(),
+            run_queue_links: ListLinks::new(),
+            parent_links: ListLinks::new(),
             process: new_process,
         });
 
@@ -227,6 +240,89 @@ impl Task {
         let copied = registers.clone();
         drop(registers);
         copied
+    }
+
+    #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
+    pub fn kernel_task_from_fn(f: fn(*mut ()), arg: *mut ()) -> UniqueArc<Task> {
+        let task = UniqueArc::new(Task {
+            registers: SpinLock::new(ExceptionRegisters::default()),
+            run_queue_links: ListLinks::new(),
+            parent_links: ListLinks::new(),
+            process: Arc::new(Process::new_kernel(create_kernel_stack())),
+        });
+
+        let mut registers = task.registers.lock();
+        registers.elr = (thread_wrapper) as u64;
+        registers.gprs[0] = (f as usize) as u64;
+        registers.gprs[1] = arg as u64;
+        registers.gprs[31] = task.stack_top();
+        assert!(
+            registers.gprs[31].is_multiple_of(16),
+            "Stack ptr is not aligned"
+        );
+        registers.spsr = 0b0101;
+        drop(registers);
+
+        task
+    }
+
+    pub fn load_program(elf: impl ElfSource) -> UniqueArc<Task> {
+        let parser = ElfParser::new(elf);
+
+        let num_segments = parser.num_segments();
+
+        let mut segments = kvec();
+        let page_table = ArmPageTableRoot::create_user();
+
+        let user_stack = create_user_stack();
+
+        for index in 0..num_segments {
+            let segment = parser.segment(index);
+            if !segment.is_null() {
+                let phys_addr = segment.loaded_phys_addr();
+                let virt_addr = segment.virt_addr() & !0xfff;
+                let pages = segment.mem_page_count();
+
+                page_table.map_page_range(virt_addr, phys_addr, pages);
+
+                segments.push(segment);
+            }
+        }
+
+        page_table.map_page_range(
+            STACK_VIRTUAL_ADDR,
+            user_stack.phys_addr(),
+            user_stack.len().div_ceil(4096),
+        );
+
+        let userspace = UserSpaceProcess {
+            page_table: SpinLock::new(page_table),
+            segments: SpinLock::new(segments),
+            user_stack: SpinLock::new(user_stack),
+            kernel_stack: create_kernel_stack(),
+            fds: TaskFdTable::new(),
+        };
+
+        let task = UniqueArc::new(Task {
+            registers: SpinLock::new(ExceptionRegisters::default()),
+            run_queue_links: ListLinks::new(),
+            parent_links: ListLinks::new(),
+            process: Arc::new(Process::User(userspace)),
+        });
+
+        let mut registers = task.registers.lock();
+        registers.elr = parser.entry_vma() as u64;
+        registers.gprs[31] = task.kernel_stack_top();
+        registers.sp_el0 = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64;
+
+        assert!(
+            registers.gprs[31].is_multiple_of(16),
+            "Stack ptr is not aligned"
+        );
+        registers.spsr = 0b0000;
+        drop(registers);
+
+        task
     }
 
     pub fn bind_pages(&self) {
@@ -285,7 +381,7 @@ pub(crate) fn create_user_stack() -> KBox<UserTaskStack> {
     unsafe { b.assume_init() }
 }
 
-impl_link!(Task, 0 => links);
+impl_link!(Task, 0 => run_queue_links, 1 => parent_links);
 
 pub struct TaskFdTable {
     fds: Mutex<KVec<TaskFd>>,
