@@ -46,8 +46,8 @@ int open(const char *path) {
     return syscall(8, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }
 
-int exec(const char *path) {
-    return syscall(22, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+int exec(const char *path, int argc, const char ** argv) {
+    return syscall(22, (uintptr_t)path, argc, (uintptr_t)argv, 0, 0, 0, 0, 0);
 }
 
 int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
@@ -114,6 +114,23 @@ void shell(void) {
 }
 
 void _start(void) {
+    int argc;
+    char **argv;
+    __asm__ volatile (
+        "mov %0, x0\n"
+        "mov %1, x1\n"
+        : "=r"(argc), "=r"(argv) :: "x0", "x1"
+    );
+
+    // if (argc <= 1) {
+    //     puts("There's an arg0\n");
+    //     puts(argv[0]);
+    // }
+    // if (argc <= 2) {
+    //     puts("There's an arg1\n");
+    //     puts(argv[1]);
+    // }
+
     int child = fork();
     if (child != 0) {
         const char *addr = "hello land\n";
@@ -135,8 +152,11 @@ void _start(void) {
         waitpid(child);
         puts("This is the parent after the child is done.\n");
     } else {
-        ms_sleep(8000);
-        puts("This is the child after sleep.\n");
+
+        const char *buf[2];
+        buf[0] = "this is an argument\n";
+        buf[1] = "this is another argument\n";
+        exec("main", 2, buf);
     }
 
     exit(0);

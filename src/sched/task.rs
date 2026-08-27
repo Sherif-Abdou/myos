@@ -65,6 +65,14 @@ impl UserTaskStack {
         new_stack
     }
 
+    pub fn get(&mut self) -> &[u8] {
+        self.0.as_slice()
+    }
+
+    pub fn get_mut(&mut self) -> &mut [u8] {
+        self.0.as_mut_slice()
+    }
+
     pub fn phys_addr(&self) -> PhysAddr {
         PhysAddr::from(self.0.as_ptr())
     }
@@ -137,7 +145,7 @@ pub enum Process {
 }
 
 impl Process {
-    pub fn exec<S: ElfSource>(&self, parser: &ElfParser<S>) {
+    pub fn exec<S: ElfSource>(&self, parser: &ElfParser<S>, args: &[u8]) {
         let Process::User(user_process) = self else {
             return;
         };
@@ -147,7 +155,25 @@ impl Process {
         let mut segments = kvec();
         let page_table = ArmPageTableRoot::create_user();
 
-        let user_stack = create_user_stack();
+        let mut user_stack = create_user_stack();
+        if !args.is_empty() {
+            let copy_start = user_stack.len() - args.len();
+            user_stack.get_mut()[copy_start..].copy_from_slice(args);
+
+            let argc = u64::from_le_bytes(args[..8].try_into().unwrap());
+            for i in 0..argc {
+                let argv = u64::from_le_bytes(
+                    args[8 * (i as usize + 1)..8 * (i as usize + 2)]
+                        .try_into()
+                        .unwrap(),
+                );
+
+                let addr = argv as usize + copy_start + STACK_VIRTUAL_ADDR;
+                user_stack.get_mut()
+                    [copy_start + 8 * (i as usize + 1)..copy_start + 8 * (i as usize + 2)]
+                    .copy_from_slice(&(addr).to_le_bytes());
+            }
+        }
 
         for index in 0..num_segments {
             let segment = parser.segment(index);
@@ -296,14 +322,22 @@ impl Task {
         pid
     }
 
-    pub fn exec(&self, elf: impl ElfSource) -> ExceptionRegisters {
+    pub fn exec(&self, elf: impl ElfSource, args: &[u8]) -> ExceptionRegisters {
+        assert!(args.len() < STACK_SIZE);
+
         let parser = ElfParser::new(elf);
 
-        self.process.exec(&parser);
+        self.process.exec(&parser, args);
 
         let mut registers = self.registers.lock();
         registers.elr = parser.entry_vma() as u64;
-        registers.sp_el0 = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64;
+        registers.sp_el0 = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64 - args.len() as u64;
+        if !args.is_empty() {
+            registers.gprs[0] = u64::from_le_bytes(args[0..8].try_into().unwrap());
+        } else {
+            registers.gprs[0] = 0;
+        }
+        registers.gprs[1] = STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64 - args.len() as u64 + 8;
 
         assert!(
             registers.gprs[31].is_multiple_of(16),

@@ -3,7 +3,7 @@ use core::str;
 use alloc::slice;
 
 use crate::{
-    allocators::kbox_with_len,
+    allocators::{KBox, align_up, kbox_with_len},
     interrupts::{
         ExceptionRegisters, RETURN_TABLE, daifset,
         sexc_handler::{copy_from_user, copy_to_user, user_strlen},
@@ -134,9 +134,48 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn parse_argv(argc: u64, argv_addr: u64) -> KBox<[u8]> {
+    // 4 bytes for argc
+    let mut buffer_size = 8 + 8 * argc as usize;
+
+    let argv = argv_addr as *mut *mut u8;
+    for i in 0..argc {
+        let local_argv = unsafe { argv.add(i as usize).read() };
+        let strlen = user_strlen(local_argv);
+
+        buffer_size += strlen + 1;
+    }
+
+    // Ensure buffer is aligned to a size that can be placed on the stack.
+    let mut buffer = kbox_with_len(align_up(buffer_size, 16));
+    let mut index = 8 + 8 * argc as usize;
+
+    buffer[0..8].copy_from_slice(&argc.to_le_bytes());
+
+    for i in 0..argc {
+        let local_argv = unsafe { argv.add(i as usize).read() };
+        let strlen = user_strlen(local_argv);
+        let src = unsafe {
+            core::ptr::slice_from_raw_parts(local_argv, strlen)
+                .as_ref()
+                .unwrap()
+        };
+        copy_from_user(&mut buffer[index..(index + strlen)], src);
+        buffer[index + strlen] = 0;
+
+        buffer[8*(i as usize + 1)..8 * (i as usize + 2)].copy_from_slice(&index.to_le_bytes());
+
+        index += strlen + 1;
+    }
+
+    buffer
+}
+
 pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let user_cstr_addr = unsafe { (*regs).gprs[0] } as *mut u8;
     let user_cstr_len = user_strlen(user_cstr_addr.cast_const());
+    let argc = unsafe { (*regs).gprs[1] };
+    let argv_addr = unsafe { (*regs).gprs[2] };
 
     let mut scratch = kbox_with_len(user_cstr_len);
 
@@ -151,7 +190,13 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let inode = EXT2_FS.get().unwrap().open(path);
 
     if let Ok(inode) = inode {
-        let new_regs = task.exec(&*inode);
+        let mut scratch_argv = kbox_with_len(8 * argc as usize);
+        let bytes = copy_from_user(&mut scratch_argv, unsafe {
+            core::slice::from_raw_parts(argv_addr as _, 8 * argc as usize)
+        });
+
+        let args = parse_argv(argc, (*scratch_argv).as_ptr().addr() as u64);
+        let new_regs = task.exec(&*inode, &args);
         task.bind_pages();
 
         unsafe { (*regs) = new_regs };
