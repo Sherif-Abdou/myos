@@ -184,7 +184,7 @@ impl Sched {
 
     pub fn unblock_task(&self, task: &Arc<Task>) {
         let mut run_queue = self.run_queue.lock();
-        let task = unsafe { self.blocked_queue.lock().remove_at(task) };
+        let task = unsafe { self.blocked_queue.lock().remove_at_unchecked(task) };
 
         run_queue.push_back(task);
     }

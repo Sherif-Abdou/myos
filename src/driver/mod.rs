@@ -41,11 +41,11 @@ macro_rules! check_driver {
                 return;
             };
             let driver: UniqueArc<$driver> = UniqueArc::new(driver);
-            let driver: ListArc<$driver, 0> = driver.into();
-            $driver::init(driver.clone_arc(), $node);
+            let driver: Arc<$driver> = driver.into_inner();
+            $driver::init(driver.clone(), $node);
 
             let device = UniqueArc::new(Device {
-                driver: driver.clone_arc(),
+                driver,
                 tag: $compatible,
                 link: ListLinks::new(),
             });

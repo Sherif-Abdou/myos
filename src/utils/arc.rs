@@ -4,6 +4,7 @@ use core::{
     marker::Unsize,
     mem::{ManuallyDrop, offset_of},
     ops::{CoerceUnsized, Deref, DerefMut},
+    pin::Pin,
     ptr::{NonNull, drop_in_place},
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
@@ -174,6 +175,10 @@ impl<T: ?Sized> UniqueArc<T> {
     pub unsafe fn as_mut(&self) -> *mut T {
         unsafe { self.inner.as_ptr() as _ }
     }
+
+    pub fn into_inner(self) -> Arc<T> {
+        self.inner
+    }
 }
 
 impl<T: ?Sized> Deref for UniqueArc<T> {
@@ -192,11 +197,11 @@ impl<T: ?Sized> DerefMut for UniqueArc<T> {
 
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<UniqueArc<U>> for UniqueArc<T> {}
 
-pub struct ListArc<T: ?Sized, const N: usize> {
+pub struct ListArc<T: ?Sized + LinkedNode<T, N>, const N: usize> {
     inner: Arc<T>,
 }
 
-impl<T: ?Sized, const N: usize> Deref for ListArc<T, N> {
+impl<T: ?Sized + LinkedNode<T, N>, const N: usize> Deref for ListArc<T, N> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -204,13 +209,23 @@ impl<T: ?Sized, const N: usize> Deref for ListArc<T, N> {
     }
 }
 
-impl<T: ?Sized, const N: usize> From<UniqueArc<T>> for ListArc<T, N> {
+impl<T: ?Sized + LinkedNode<T, N>, const N: usize> From<UniqueArc<T>> for ListArc<T, N> {
     fn from(value: UniqueArc<T>) -> Self {
+        let link: Pin<&ListLinks> = unsafe {
+            Pin::new_unchecked(
+                T::link_from_arc(value.inner.inner.as_ptr())
+                    .as_ref()
+                    .unwrap(),
+            )
+        };
+
+        link.owned().store(true, SeqCst);
+
         ListArc { inner: value.inner }
     }
 }
 
-impl<T: ?Sized, const N: usize> ListArc<T, N> {
+impl<T: ?Sized + LinkedNode<T, N>, const N: usize> ListArc<T, N> {
     pub unsafe fn into_arc_inner(self) -> NonNull<ArcInner<T>> {
         let arc = ManuallyDrop::new(self);
 
@@ -228,8 +243,40 @@ impl<T: ?Sized, const N: usize> ListArc<T, N> {
     }
 }
 
-impl<T: ?Sized + Unsize<U>, U: ?Sized, const N: usize> CoerceUnsized<ListArc<U, N>>
-    for ListArc<T, N>
+impl<T: ?Sized, const N: usize> ListArc<T, N>
+where
+    T: LinkedNode<T, N>,
+{
+    pub fn try_from_arc(arc: Arc<T>) -> Result<ListArc<T, N>, Arc<T>> {
+        let link: Pin<&ListLinks> =
+            unsafe { Pin::new_unchecked(T::link_from_arc(arc.inner.as_ptr()).as_ref().unwrap()) };
+
+        match link.owned().compare_exchange(false, true, SeqCst, SeqCst) {
+            Ok(_) => Ok(ListArc { inner: arc }),
+            Err(_) => Err(arc),
+        }
+    }
+}
+
+impl<T: ?Sized, const N: usize> Drop for ListArc<T, N>
+where
+    T: LinkedNode<T, N>,
+{
+    fn drop(&mut self) {
+        let link: Pin<&ListLinks> = unsafe {
+            Pin::new_unchecked(
+                T::link_from_arc(self.inner.inner.as_ptr())
+                    .as_ref()
+                    .unwrap(),
+            )
+        };
+
+        link.owned().store(false, SeqCst);
+    }
+}
+
+impl<T: LinkedNode<T, N> + Unsize<U>, U: LinkedNode<U, N>, const N: usize>
+    CoerceUnsized<ListArc<U, N>> for ListArc<T, N>
 {
 }
 

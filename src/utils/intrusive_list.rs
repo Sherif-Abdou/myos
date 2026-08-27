@@ -39,6 +39,10 @@ impl ListLinks {
         }
     }
 
+    pub fn owned(&self) -> &AtomicBool {
+        &self.owned
+    }
+
     pub unsafe fn next(self: Pin<&Self>) -> Option<Pin<&Self>> {
         self.next
             .get()
@@ -300,7 +304,8 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
         }
     }
 
-    pub unsafe fn cursor_at(&self, node: &Arc<T>) -> ListCursor<'_, T, N> {
+    /// SAFETY: Caller must guarantee that the node is in this list.
+    pub unsafe fn cursor_at_unchecked(&self, node: &Arc<T>) -> ListCursor<'_, T, N> {
         let link = T::link_from_arc(unsafe { node.as_inner_ptr() } as *mut _);
 
         ListCursor {
@@ -309,7 +314,8 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
         }
     }
 
-    pub unsafe fn remove_at(&mut self, node: &Arc<T>) -> ListArc<T, N> {
+    /// SAFETY: Caller must guarantee that the node is in this list.
+    pub unsafe fn remove_at_unchecked(&mut self, node: &Arc<T>) -> ListArc<T, N> {
         let ptr = T::link_from_arc(unsafe { node.as_inner_ptr() } as *mut _);
         let link = unsafe { Pin::new_unchecked(ptr.as_ref().unwrap()) };
 
@@ -355,7 +361,7 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursor<'a, T, N> {
         self.ptr.unwrap().addr().get() == self.list.sentinel_addr()
     }
 
-    pub fn get(&self) -> Option<&T> {
+    pub fn get(&self) -> Option<&'_ T> {
         if self.is_sentinel() {
             return None;
         }
