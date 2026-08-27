@@ -1,19 +1,21 @@
-use core::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec},
     elf::{ElfParser, ElfSource, Segment},
     impl_link,
     interrupts::ExceptionRegisters,
-    sched::{Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, restore_regs_and_eret},
+    sched::{Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, restore_regs_and_eret},
     subsystem::{ArmPageTableRoot, Inode},
-    utils::{Arc, ListLinks, PhysAddr, SpinLock, UniqueArc, with_core_critical_section},
+    utils::{
+        Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, UniqueArc, with_core_critical_section,
+    },
 };
 
 extern "C" fn thread_wrapper(f: extern "C" fn(*mut ()), arg: *mut ()) {
     f(arg);
 
-    SCHEDULER.get().unwrap().end_task();
+    SCHEDULER.get().unwrap().end_task(0);
 
     let next_task = SCHEDULER.get().unwrap().next_task().unwrap();
 
@@ -185,16 +187,68 @@ impl Process {
     }
 }
 
+static NEXT_PID_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskState {
+    Running,
+    Runnable,
+    Blocked,
+    Done(i32),
+}
+
 #[repr(align(16))]
 pub struct Task {
+    pub(crate) pid: u32,
+    pub(crate) state: SpinLock<TaskState>,
+    pub(crate) completion_waiters: WaitQueue,
     pub(crate) registers: SpinLock<ExceptionRegisters>,
     pub(crate) run_queue_links: ListLinks,
     pub(crate) parent_links: ListLinks,
     pub(crate) process: Arc<Process>,
+    pub(crate) children: SpinLock<List<Task, 1>>,
+    pub(crate) parent_pid: u32,
 }
 
 impl Task {
-    pub fn fork_process(&self) {
+    fn next_pid() -> u32 {
+        NEXT_PID_COUNTER.fetch_add(1, SeqCst)
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    pub fn parent(&self) -> u32 {
+        self.parent_pid
+    }
+
+    pub fn has_parent(&self) -> bool {
+        self.parent_pid != 0
+    }
+
+    pub fn mark_running(&self) {
+        *self.state.lock() = TaskState::Running;
+    }
+
+    pub fn is_done(&self) -> bool {
+        matches!(*self.state.lock(), TaskState::Done(_))
+    }
+
+    pub fn mark_runnable(&self) {
+        *self.state.lock() = TaskState::Runnable;
+    }
+
+    pub fn mark_blocked(&self) {
+        *self.state.lock() = TaskState::Blocked;
+    }
+
+    pub fn mark_done(&self, code: i32) {
+        *self.state.lock() = TaskState::Done(code);
+        self.completion_waiters.unblock_all();
+    }
+
+    pub fn fork_process(&self) -> u32 {
         let registers = self.registers.lock();
         let mut new_registers = registers.clone();
         let new_process = Arc::new(self.process.fork());
@@ -213,14 +267,33 @@ impl Task {
         new_registers.gprs[0] = 0;
         new_registers.gprs[31] = new_kernel_stack - (old_kernel_stack - new_registers.gprs[31]);
 
-        let new_task = UniqueArc::new(Task {
+        let new_task = Arc::new(Task {
+            pid: Self::next_pid(),
+            state: SpinLock::new(TaskState::Runnable),
+            completion_waiters: WaitQueue::new(),
             registers: SpinLock::new(new_registers),
             run_queue_links: ListLinks::new(),
             parent_links: ListLinks::new(),
             process: new_process,
+            children: SpinLock::new(List::new()),
+            parent_pid: self.pid(),
         });
 
-        SCHEDULER.get().unwrap().append_task(new_task);
+        let Ok(scheduler_link) = ListArc::try_from_arc(new_task.clone()) else {
+            panic!("Could not get scheduler link of forked task.");
+        };
+
+        let Ok(parent_link) = ListArc::try_from_arc(new_task.clone()) else {
+            panic!("Could not get parent link of forked task.");
+        };
+
+        self.children.lock().push_back(parent_link);
+
+        let pid = new_task.pid;
+
+        SCHEDULER.get().unwrap().append_task(scheduler_link);
+
+        pid
     }
 
     pub fn exec(&self, elf: impl ElfSource) -> ExceptionRegisters {
@@ -245,10 +318,15 @@ impl Task {
     #[allow(clippy::fn_to_numeric_cast, function_casts_as_integer)]
     pub fn kernel_task_from_fn(f: fn(*mut ()), arg: *mut ()) -> UniqueArc<Task> {
         let task = UniqueArc::new(Task {
+            pid: Self::next_pid(),
+            state: SpinLock::new(TaskState::Runnable),
+            completion_waiters: WaitQueue::new(),
             registers: SpinLock::new(ExceptionRegisters::default()),
             run_queue_links: ListLinks::new(),
             parent_links: ListLinks::new(),
             process: Arc::new(Process::new_kernel(create_kernel_stack())),
+            children: SpinLock::new(List::new()),
+            parent_pid: 0,
         });
 
         let mut registers = task.registers.lock();
@@ -304,10 +382,15 @@ impl Task {
         };
 
         let task = UniqueArc::new(Task {
+            pid: Self::next_pid(),
+            state: SpinLock::new(TaskState::Runnable),
+            completion_waiters: WaitQueue::new(),
             registers: SpinLock::new(ExceptionRegisters::default()),
             run_queue_links: ListLinks::new(),
             parent_links: ListLinks::new(),
             process: Arc::new(Process::User(userspace)),
+            children: SpinLock::new(List::new()),
+            parent_pid: 0,
         });
 
         let mut registers = task.registers.lock();
@@ -367,6 +450,31 @@ impl Task {
         match *self.process {
             Process::Kernel(_) => false,
             Process::User(_) => true,
+        }
+    }
+
+    pub fn find_child(&self, pid: u32) -> Option<Arc<Task>> {
+        let children = self.children.lock();
+        let mut cursor = children.cursor();
+
+        while let Some(child) = cursor.get_arc() {
+            if child.pid() == pid {
+                return Some(child);
+            } else {
+                let _ = cursor.next();
+            }
+        }
+
+        None
+    }
+
+    pub fn kill_children(&self) {
+        let mut children = self.children.lock();
+        let mut cursor = children.cursor_mut();
+
+        while let Some(child) = cursor.get() {
+            child.kill_children();
+            cursor.remove();
         }
     }
 }

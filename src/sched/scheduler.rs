@@ -3,7 +3,9 @@ use core::arch::{asm, naked_asm};
 use crate::{
     cpu_local,
     interrupts::{ExceptionRegisters, daifclr, daifset},
+    printk,
     sched::Task,
+    timer::ms_sleep,
     utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
 };
 
@@ -26,6 +28,10 @@ pub fn init_scheduler() {
         "Couldn't initialize scheduler"
     );
     create_local_idle_task();
+    SCHEDULER
+        .get()
+        .unwrap()
+        .task_from_fn(kill_thread, core::ptr::null_mut());
 }
 
 pub fn create_local_idle_task() {
@@ -140,6 +146,13 @@ fn threaded_idle(_arg: *mut ()) {
     }
 }
 
+fn kill_thread(_arg: *mut ()) {
+    loop {
+        SCHEDULER.get().unwrap().flush_kill_queue();
+        ms_sleep(1000);
+    }
+}
+
 impl Sched {
     pub fn local_task(&self) -> Option<Arc<Task>> {
         self.scheduled.local().lock().as_ref().cloned()
@@ -155,6 +168,8 @@ impl Sched {
         with_core_critical_section(|| {
             let task = self.staging.local().lock().take().unwrap();
 
+            task.mark_blocked();
+
             // let task = unsafe { self.run_queue.lock().remove_at(&task) };
 
             self.blocked_queue.lock().push_back(task);
@@ -165,15 +180,20 @@ impl Sched {
         let mut run_queue = self.run_queue.lock();
         let task = unsafe { self.blocked_queue.lock().remove_at_unchecked(task) };
 
+        task.mark_runnable();
+
         run_queue.push_back(task);
     }
 
-    pub fn end_task(&self) {
+    pub fn end_task(&self, code: i32) {
         let mut kill_queue = self.kill_queue.lock();
         let mut current = self.staging.local().lock();
 
         if let Some(task) = current.take() {
-            kill_queue.push_back(task);
+            task.mark_done(code);
+            if !task.has_parent() {
+                kill_queue.push_back(task);
+            }
         }
     }
 
@@ -218,8 +238,15 @@ impl Sched {
 
         if let Some(task) = task {
             let mut scheduled = self.scheduled.local().lock();
+            if let Some(ref scheduled) = *scheduled
+                && !scheduled.is_done()
+            {
+                scheduled.mark_runnable();
+            }
 
             task.bind_pages();
+
+            task.mark_running();
 
             *scheduled = Some(task.clone_arc());
 
@@ -232,6 +259,12 @@ impl Sched {
             // Run the idle task.
             let idle = self.idle_task.local().lock();
             let mut scheduled = self.scheduled.local().lock();
+
+            idle.as_ref().unwrap().mark_running();
+            if let Some(ref scheduled) = *scheduled {
+                scheduled.mark_runnable();
+            }
+
             *scheduled = Some(idle.as_ref().unwrap().clone_arc());
 
             Some(scheduled.as_ref().unwrap().registers.lock().clone())
@@ -240,9 +273,11 @@ impl Sched {
 
     pub fn flush_kill_queue(&self) {
         let mut kill_queue = self.kill_queue.lock();
+        let mut cursor = kill_queue.cursor_mut();
 
-        while !kill_queue.is_empty() {
-            kill_queue.remove_front();
+        while let Some(task) = cursor.get() {
+            task.kill_children();
+            cursor.remove();
         }
 
         drop(kill_queue);

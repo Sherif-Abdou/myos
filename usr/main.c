@@ -54,6 +54,8 @@ int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
 
 int fork() { return syscall(20, 0, 0, 0, 0, 0, 0, 0, 0); }
 
+int waitpid(int pid) { return syscall(27, pid, 0, 0, 0, 0, 0, 0, 0); }
+
 int puts(const char *str) {
     write(0, str, strlen(str));
     return 0;
@@ -112,10 +114,10 @@ void shell(void) {
 }
 
 void _start(void) {
-    int ret = fork();
-    if (ret == 0) {
+    int child = fork();
+    if (child != 0) {
         const char *addr = "hello land\n";
-        write(0, (const char *)0x8, 4);
+        // write(0, (const char *)0x8, 4);
 
         int fd = open("hi.txt");
 
@@ -130,8 +132,11 @@ void _start(void) {
             puts(buf);
             close(fd);
         }
+        waitpid(child);
+        puts("This is the parent after the child is done.\n");
     } else {
-        exec("main");
+        ms_sleep(8000);
+        puts("This is the child after sleep.\n");
     }
 
     exit(0);

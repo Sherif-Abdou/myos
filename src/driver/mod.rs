@@ -5,7 +5,7 @@ use crate::{
     driver::{pl::Pl, virtio::VirtioBlkDriver},
     dtb::FdtNode,
     impl_link,
-    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    utils::{Arc, List, ListLinks, SpinLock, UniqueArc},
 };
 
 pub struct Device {

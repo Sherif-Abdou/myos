@@ -519,11 +519,11 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursorMut<'a, T, N> {
 
         unsafe {
             link.remove();
-            if next_ptr.unwrap().addr().get() != self.list.sentinel_addr() {
-                self.ptr = next_ptr;
-            } else {
-                self.ptr = None;
-            }
+            // if next_ptr.unwrap().addr().get() != self.list.sentinel_addr() {
+            self.ptr = next_ptr;
+            // } else {
+            //     self.ptr = None;
+            // }
 
             let ptr = &raw const *link.as_ref();
             let arc_inner = T::arc_from_link(ptr as *mut ListLinks);

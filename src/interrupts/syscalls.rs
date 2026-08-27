@@ -178,8 +178,9 @@ pub fn close(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
-pub fn exit(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    SCHEDULER.get().unwrap().end_task();
+pub fn exit(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let code = unsafe { (*regs).gprs[0] as i32 };
+    SCHEDULER.get().unwrap().end_task(code);
 
     daifset();
     // TODO: Use a separate sexc table
@@ -188,6 +189,22 @@ pub fn exit(_regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         .put(&SCHEDULER.get().unwrap().next_task().unwrap());
 
     RETURN_TABLE.lock().take().unwrap()
+}
+
+pub fn waitpid(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let pid = unsafe { (*regs).gprs[0] as u32 };
+
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    if let Some(child) = task.find_child(pid) {
+        child.completion_waiters.enqueue_and_block();
+    } else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+    }
+
+    regs
 }
 
 pub fn nanosleep(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
@@ -205,10 +222,10 @@ pub fn nanosleep(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 pub fn fork(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-    task.fork_process();
+    let pid = task.fork_process();
 
     unsafe {
-        (*regs).gprs[0] = 1;
+        (*regs).gprs[0] = pid as u64;
     }
 
     regs
@@ -224,6 +241,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[17] = Syscall::new(nanosleep);
     table[20] = Syscall::new(fork);
     table[22] = Syscall::new(exec);
+    table[27] = Syscall::new(waitpid);
     table[50] = Syscall::new(exit);
 
     table

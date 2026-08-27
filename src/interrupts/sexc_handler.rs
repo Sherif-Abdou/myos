@@ -241,7 +241,7 @@ fn default_sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegist
 }
 
 fn abort_thread() -> *const ExceptionRegisters {
-    SCHEDULER.get().unwrap().end_task();
+    SCHEDULER.get().unwrap().end_task(-1);
 
     RETURN_TABLE
         .lock()
