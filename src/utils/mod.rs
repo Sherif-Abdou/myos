@@ -4,10 +4,10 @@ mod core_lock;
 mod cpu_local;
 mod deque;
 mod intrusive_list;
+mod intrusive_rbtree;
 mod mmio;
 mod spin_lock;
 mod string;
-mod intrusive_rbtree;
 
 pub use addr::PhysAddr;
 pub use arc::*;

@@ -6,7 +6,10 @@ use core::{
     sync::atomic::AtomicBool,
 };
 
-use crate::utils::{ArcInner, TreeArc};
+use crate::{
+    utils::{ArcInner, TreeArc},
+    write_sysreg,
+};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum RbColor {
@@ -60,6 +63,15 @@ impl RbLinks {
         self.left.get()
     }
 
+    unsafe fn child(self: Pin<&Self>, direction: Direction) -> Option<NonNull<RbLinks>> {
+        unsafe {
+            match direction {
+                Direction::Left => self.left(),
+                Direction::Right => self.right(),
+            }
+        }
+    }
+
     unsafe fn parent(self: Pin<&Self>) -> Option<NonNull<RbLinks>> {
         self.parent.get()
     }
@@ -75,6 +87,17 @@ impl RbLinks {
                     unsafe { grandparent.as_ref().left.get() }
                 }
             })
+        })
+    }
+
+    unsafe fn sibling(self: Pin<&Self>) -> Option<NonNull<RbLinks>> {
+        let parent = self.parent.get();
+        parent.and_then(|parent| {
+            if unsafe { parent.as_ref().left.get() == Some(self.addr()) } {
+                unsafe { parent.as_ref().right.get() }
+            } else {
+                unsafe { parent.as_ref().left.get() }
+            }
         })
     }
 
@@ -138,22 +161,159 @@ impl RbLinks {
     /// Swaps the parent, left, and right pointers.
     ///
     /// Does not change colors.
-    unsafe fn swap_pointers(self: Pin<&Self>, other: Pin<&Self>) {
+    ///
+    /// Returns a pointer to a new root if the root has been changed by this swap.
+    unsafe fn swap_pointers(self: Pin<&Self>, other: Pin<&Self>) -> Option<NonNull<RbLinks>> {
+        if unsafe { self.parent() == Some(other.addr()) } {
+            let local_direction = unsafe { self.direction().unwrap() };
+            let mut new_root = None;
+            if let Some(parent) = unsafe { other.parent() } {
+                let parent_direction = unsafe { other.direction().unwrap() };
+                let pinned_parent = unsafe { Pin::new_unchecked(parent.as_ref()) };
+                unsafe {
+                    pinned_parent.insert_child(parent_direction, Some(self.addr()));
+                }
+            } else {
+                self.parent.set(None);
+                new_root = Some(unsafe { self.addr() });
+            }
+            unsafe {
+                other.parent.set(Some(self.addr()));
+                let old_left = self.left();
+                let old_right = self.right();
+                let old_sibling = other.child(local_direction.opposite());
+
+                self.insert_child(local_direction, Some(other.addr()));
+                self.insert_child(local_direction.opposite(), old_sibling);
+                other.insert_left(old_left);
+                other.insert_right(old_right);
+            }
+
+            return new_root;
+        } else if unsafe { other.parent() == Some(self.addr()) } {
+            return unsafe { other.swap_pointers(self) };
+        }
+
         self.parent.swap(&other.parent);
         self.left.swap(&other.left);
         self.right.swap(&other.right);
+        if let Some(left) = self.left.get() {
+            unsafe {
+                (*left.as_ptr()).parent.set(Some(self.addr()));
+            }
+        }
+        if let Some(right) = self.right.get() {
+            unsafe {
+                (*right.as_ptr()).parent.set(Some(self.addr()));
+            }
+        }
+        if let Some(left) = other.left.get() {
+            unsafe {
+                (*left.as_ptr()).parent.set(Some(other.addr()));
+            }
+        }
+        if let Some(right) = other.right.get() {
+            unsafe {
+                (*right.as_ptr()).parent.set(Some(other.addr()));
+            }
+        }
+
+        if let Some(parent) = unsafe { self.parent() } {
+            unsafe {
+                if let Some(left) = (*parent.as_ptr()).left.get()
+                    && (left == other.addr())
+                {
+                    (*parent.as_ptr()).left.set(Some(self.addr()));
+                }
+            }
+
+            unsafe {
+                if let Some(right) = (*parent.as_ptr()).right.get()
+                    && (right == other.addr())
+                {
+                    (*parent.as_ptr()).right.set(Some(self.addr()));
+                }
+            }
+        }
+
+        if let Some(parent) = unsafe { other.parent() } {
+            unsafe {
+                if let Some(left) = (*parent.as_ptr()).left.get()
+                    && (left == self.addr())
+                {
+                    (*parent.as_ptr()).left.set(Some(other.addr()));
+                }
+            }
+
+            unsafe {
+                if let Some(right) = (*parent.as_ptr()).right.get()
+                    && (right == self.addr())
+                {
+                    (*parent.as_ptr()).right.set(Some(other.addr()));
+                }
+            }
+        }
+
+        if unsafe { self.parent().is_none() } {
+            Some(unsafe { self.addr() })
+        } else if unsafe { other.parent().is_none() } {
+            Some(unsafe { other.addr() })
+        } else {
+            None
+        }
     }
 
     unsafe fn take_parent_of(self: Pin<&Self>, other: Pin<&Self>) {
         let parent = other.parent.take();
+        unsafe {
+            self.update_parent(other.addr(), parent);
+        }
+    }
+
+    unsafe fn insert_child(
+        self: Pin<&Self>,
+        direction: Direction,
+        child: Option<NonNull<RbLinks>>,
+    ) {
+        unsafe {
+            match direction {
+                Direction::Left => self.insert_left(child),
+                Direction::Right => self.insert_right(child),
+            }
+        }
+    }
+
+    fn update_parent(
+        self: Pin<&Self>,
+        old_child: NonNull<RbLinks>,
+        parent: Option<NonNull<RbLinks>>,
+    ) {
         if let Some(parent) = parent {
-            if unsafe { parent.as_ref().left.get() == Some(other.addr()) } {
+            if unsafe { parent.as_ref().left.get() == Some(old_child) } {
                 unsafe {
                     Pin::new_unchecked(parent.as_ref()).insert_left(Some(self.addr()));
                 }
             } else {
                 unsafe {
                     Pin::new_unchecked(parent.as_ref()).insert_right(Some(self.addr()));
+                }
+            }
+        }
+    }
+
+    unsafe fn remove(self: Pin<&Self>) {
+        assert!(self.left.get().is_none());
+        assert!(self.right.get().is_none());
+
+        let parent = self.parent.take();
+        if let Some(parent) = parent {
+            if unsafe { parent.as_ref().left.get() == Some(self.addr()) } {
+                unsafe {
+                    Pin::new_unchecked(parent.as_ref()).insert_left(None);
+                }
+            } else {
+                unsafe {
+                    Pin::new_unchecked(parent.as_ref()).insert_right(None);
                 }
             }
         }
@@ -311,6 +471,235 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         match direction {
             Direction::Left => self.rotate_left(link),
             Direction::Right => self.rotate_right(link),
+        }
+    }
+
+    fn inorder_successor(&mut self, link: NonNull<RbLinks>) -> Option<NonNull<RbLinks>> {
+        let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
+        if let Some(right) = unsafe { pinned_link.right() } {
+            let mut cur_link = right;
+            while let Some(left) = unsafe { Self::pin_nonnull_link(&cur_link).left() } {
+                cur_link = left;
+            }
+            return Some(cur_link);
+        } else {
+            let mut cur_link = link;
+            let mut cur_parent = unsafe { Self::pin_nonnull_link(&cur_link).parent() };
+            while let Some(parent) = cur_parent {
+                let parent_pin = unsafe { Self::pin_nonnull_link(&parent) };
+                if unsafe { parent_pin.left() } == Some(cur_link) {
+                    break;
+                } else {
+                    cur_link = parent;
+                    cur_parent = unsafe { Self::pin_nonnull_link(&cur_link).parent() };
+                }
+            }
+
+            if let Some(parent) = cur_parent {
+                return Some(parent);
+            }
+        }
+        None
+    }
+
+    fn inorder_predecessor(&mut self, link: NonNull<RbLinks>) -> Option<NonNull<RbLinks>> {
+        let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
+        if let Some(left) = unsafe { pinned_link.left() } {
+            let mut cur_link = left;
+            while let Some(right) = unsafe { Self::pin_nonnull_link(&cur_link).right() } {
+                cur_link = right;
+            }
+            return Some(cur_link);
+        } else {
+            let mut cur_link = link;
+            let mut cur_parent = unsafe { Self::pin_nonnull_link(&cur_link).parent() };
+            while let Some(parent) = cur_parent {
+                let parent_pin = unsafe { Self::pin_nonnull_link(&parent) };
+                if unsafe { parent_pin.right() } == Some(cur_link) {
+                    break;
+                } else {
+                    cur_link = parent;
+                    cur_parent = unsafe { Self::pin_nonnull_link(&cur_link).parent() };
+                }
+            }
+
+            if let Some(parent) = cur_parent {
+                return Some(parent);
+            }
+        }
+        None
+    }
+
+    fn remove(&mut self, link: NonNull<RbLinks>) {
+        let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
+
+        let mut right = unsafe { pinned_link.right() };
+
+        if unsafe { pinned_link.left().is_some() } && right.is_some() {
+            let successor = self
+                .inorder_successor(link)
+                .expect("If node has two children, it must have in order successor.");
+            let pinned_successor = unsafe { Self::pin_nonnull_link(&successor) };
+
+            unsafe {
+                if let Some(root) = pinned_link.swap_pointers(pinned_successor) {
+                    self.root = Some(root);
+                }
+            }
+
+            right = unsafe { pinned_link.right() };
+        }
+
+        if let Some(right) = right {
+            let pinned_right = unsafe { Self::pin_nonnull_link(&right) };
+
+            unsafe {
+                if let Some(root) = pinned_link.swap_pointers(pinned_right) {
+                    self.root = Some(root);
+                }
+            }
+            pinned_right.set_color(RbColor::Black);
+            unsafe {
+                pinned_link.remove();
+            }
+            return;
+        } else if let Some(left) = unsafe { pinned_link.left() } {
+            let pinned_left = unsafe { Self::pin_nonnull_link(&left) };
+
+            unsafe {
+                if let Some(root) = pinned_link.swap_pointers(pinned_left) {
+                    self.root = Some(root);
+                }
+            }
+            pinned_left.set_color(RbColor::Black);
+            unsafe {
+                pinned_link.remove();
+            }
+            return;
+        }
+
+        if self.root == Some(link) {
+            unsafe {
+                pinned_link.remove();
+            }
+            self.root = None;
+            return;
+        }
+
+        if pinned_link.color() == RbColor::Red {
+            unsafe {
+                pinned_link.remove();
+            }
+            return;
+        }
+
+        let direction = unsafe { pinned_link.direction().unwrap() };
+        let parent = unsafe { pinned_link.parent().unwrap() };
+
+        unsafe {
+            pinned_link.remove();
+        }
+
+        self.color_remove(parent, direction);
+    }
+
+    fn color_remove(&mut self, parent: NonNull<RbLinks>, mut direction: Direction) {
+        macro_rules! pin_nonnull {
+            ($link:expr) => {
+                unsafe { Self::pin_nonnull_link(&$link) }
+            };
+        }
+        let mut outer_parent = Some(parent);
+
+        while let Some(parent) = outer_parent {
+            let pinned_parent = pin_nonnull!(&parent);
+            let sibling = unsafe {
+                pinned_parent
+                    .child(direction.opposite())
+                    .expect("There must be a sibling in this scenario.")
+            };
+            let pinned_sibling = pin_nonnull!(&sibling);
+            let close_nephew = unsafe { pinned_sibling.child(direction) };
+            let distant_nephew = unsafe { pinned_sibling.child(direction.opposite()) };
+
+            if pinned_sibling.color() == RbColor::Red {
+                self.rotate(sibling, direction);
+                pinned_parent.set_color(RbColor::Red);
+                pinned_sibling.set_color(RbColor::Black);
+                let sibling = close_nephew.unwrap();
+                let pinned_sibling = pin_nonnull!(sibling);
+                let close_nephew = unsafe { pinned_sibling.child(direction) };
+                let distant_nephew = unsafe { pinned_sibling.child(direction.opposite()) };
+
+                if let Some(distant_nephew) = distant_nephew
+                    && pin_nonnull!(distant_nephew).color() == RbColor::Red
+                {
+                    self.rotate(sibling, direction);
+                    pinned_sibling.set_color(pinned_parent.color());
+                    pinned_parent.set_color(RbColor::Black);
+                    pin_nonnull!(distant_nephew).set_color(RbColor::Black);
+                    return;
+                }
+
+                if let Some(close_nephew) = close_nephew
+                    && pin_nonnull!(close_nephew).color() == RbColor::Red
+                {
+                    self.rotate(close_nephew, direction.opposite());
+                    pinned_sibling.set_color(RbColor::Red);
+                    pin_nonnull!(&close_nephew).set_color(RbColor::Black);
+                    let distant_nephew = sibling;
+                    let sibling = close_nephew;
+
+                    self.rotate(sibling, direction);
+                    pin_nonnull!(sibling).set_color(pinned_parent.color());
+                    pinned_parent.set_color(RbColor::Black);
+                    pin_nonnull!(distant_nephew).set_color(RbColor::Black);
+                    return;
+                }
+
+                pinned_parent.set_color(RbColor::Black);
+                pinned_sibling.set_color(RbColor::Red);
+                return;
+            }
+
+            if let Some(distant_nephew) = distant_nephew
+                && pin_nonnull!(distant_nephew).color() == RbColor::Red
+            {
+                self.rotate(sibling, direction);
+                pinned_sibling.set_color(pinned_parent.color());
+                pinned_parent.set_color(RbColor::Black);
+                pin_nonnull!(distant_nephew).set_color(RbColor::Black);
+                return;
+            }
+
+            if let Some(close_nephew) = close_nephew
+                && pin_nonnull!(close_nephew).color() == RbColor::Red
+            {
+                self.rotate(close_nephew, direction.opposite());
+                pinned_sibling.set_color(RbColor::Red);
+                pin_nonnull!(&close_nephew).set_color(RbColor::Black);
+                let distant_nephew = sibling;
+                let sibling = close_nephew;
+
+                self.rotate(sibling, direction);
+                pin_nonnull!(sibling).set_color(pinned_parent.color());
+                pinned_parent.set_color(RbColor::Black);
+                pin_nonnull!(distant_nephew).set_color(RbColor::Black);
+                return;
+            }
+
+            if pinned_parent.color() == RbColor::Red {
+                pinned_sibling.set_color(RbColor::Red);
+                pinned_parent.set_color(RbColor::Black);
+                return;
+            }
+
+            pinned_sibling.set_color(RbColor::Red);
+            direction = unsafe {
+                // Doesn't matter if there's no parent
+                pinned_parent.direction().unwrap_or(Direction::Left)
+            };
+            outer_parent = unsafe { pinned_parent.parent() };
         }
     }
 

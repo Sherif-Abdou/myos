@@ -163,7 +163,7 @@ pub fn parse_argv(argc: u64, argv_addr: u64) -> KBox<[u8]> {
         copy_from_user(&mut buffer[index..(index + strlen)], src);
         buffer[index + strlen] = 0;
 
-        buffer[8*(i as usize + 1)..8 * (i as usize + 2)].copy_from_slice(&index.to_le_bytes());
+        buffer[8 * (i as usize + 1)..8 * (i as usize + 2)].copy_from_slice(&index.to_le_bytes());
 
         index += strlen + 1;
     }
