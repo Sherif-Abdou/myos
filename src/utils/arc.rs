@@ -11,7 +11,10 @@ use core::{
 
 use alloc::alloc::Allocator;
 
-use crate::{allocators::KERNEL_ALLOCATOR, utils::ListLinks};
+use crate::{
+    allocators::KERNEL_ALLOCATOR,
+    utils::{ListLinks, RbLinks, RbNode},
+};
 
 pub struct ArcInner<T: ?Sized> {
     count: AtomicUsize,
@@ -278,6 +281,89 @@ where
 impl<T: LinkedNode<T, N> + Unsize<U>, U: LinkedNode<U, N>, const N: usize>
     CoerceUnsized<ListArc<U, N>> for ListArc<T, N>
 {
+}
+
+pub struct TreeArc<T: ?Sized + RbNode<T, N>, const N: usize> {
+    inner: Arc<T>,
+}
+
+impl<T: ?Sized + RbNode<T, N>, const N: usize> From<UniqueArc<T>> for TreeArc<T, N> {
+    fn from(value: UniqueArc<T>) -> Self {
+        let link: Pin<&RbLinks> = unsafe {
+            Pin::new_unchecked(
+                T::link_from_arc(value.inner.inner.as_ptr())
+                    .as_ref()
+                    .unwrap(),
+            )
+        };
+
+        link.owned().store(true, SeqCst);
+
+        TreeArc { inner: value.inner }
+    }
+}
+
+impl<T: ?Sized, const N: usize> TreeArc<T, N>
+where
+    T: RbNode<T, N>,
+{
+    pub fn try_from_arc(arc: Arc<T>) -> Result<TreeArc<T, N>, Arc<T>> {
+        let link: Pin<&RbLinks> =
+            unsafe { Pin::new_unchecked(T::link_from_arc(arc.inner.as_ptr()).as_ref().unwrap()) };
+
+        match link.owned().compare_exchange(false, true, SeqCst, SeqCst) {
+            Ok(_) => Ok(TreeArc { inner: arc }),
+            Err(_) => Err(arc),
+        }
+    }
+}
+
+impl<T: ?Sized + RbNode<T, N>, const N: usize> TreeArc<T, N> {
+    pub unsafe fn into_arc_inner(self) -> NonNull<ArcInner<T>> {
+        let arc = ManuallyDrop::new(self);
+
+        arc.inner.inner
+    }
+
+    pub unsafe fn from_arc_inner(inner: NonNull<ArcInner<T>>) -> Self {
+        Self {
+            inner: Arc { inner },
+        }
+    }
+
+    pub fn clone_arc(&self) -> Arc<T> {
+        self.inner.clone()
+    }
+}
+
+impl<T: RbNode<T, N> + Unsize<U>, U: RbNode<U, N>, const N: usize> CoerceUnsized<TreeArc<U, N>>
+    for TreeArc<T, N>
+{
+}
+
+impl<T: ?Sized, const N: usize> Drop for TreeArc<T, N>
+where
+    T: RbNode<T, N>,
+{
+    fn drop(&mut self) {
+        let link: Pin<&RbLinks> = unsafe {
+            Pin::new_unchecked(
+                T::link_from_arc(self.inner.inner.as_ptr())
+                    .as_ref()
+                    .unwrap(),
+            )
+        };
+
+        link.owned().store(false, SeqCst);
+    }
+}
+
+impl<T: ?Sized + RbNode<T, N>, const N: usize> Deref for TreeArc<T, N> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 pub trait LinkedNode<T: ?Sized, const N: usize> {

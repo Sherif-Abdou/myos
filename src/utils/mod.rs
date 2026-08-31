@@ -7,6 +7,7 @@ mod intrusive_list;
 mod mmio;
 mod spin_lock;
 mod string;
+mod intrusive_rbtree;
 
 pub use addr::PhysAddr;
 pub use arc::*;
@@ -14,6 +15,7 @@ pub use core_lock::*;
 pub use cpu_local::*;
 pub use deque::Deque;
 pub use intrusive_list::*;
+pub use intrusive_rbtree::*;
 pub use mmio::Mmio;
 pub use spin_lock::*;
 pub use string::*;
