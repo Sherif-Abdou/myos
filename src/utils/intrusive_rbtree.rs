@@ -393,6 +393,21 @@ struct RbTree<T: RbNode<T, N>, const N: usize = 0> {
     _phantom: PhantomData<T>,
 }
 
+impl<T: RbNode<T, N>, const N: usize> Drop for RbTree<T, N> {
+    fn drop(&mut self) {
+        while let Some(link) = self.root {
+            unsafe {
+                self.remove_link(link);
+            }
+
+            let arc_inner = T::arc_from_link(link.as_ptr());
+            let tree_arc = unsafe { TreeArc::from_arc_inner(NonNull::new_unchecked(arc_inner)) };
+
+            drop(tree_arc);
+        }
+    }
+}
+
 impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
     pub const fn new() -> Self {
         Self {
@@ -867,6 +882,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 let key = key.borrow();
 
                 let mut raw_current_link = self.root;
+                let mut last_left = None;
                 while let Some(current_link) = raw_current_link {
                     let current_link_raw = current_link.as_ptr();
                     let current_key = T::key_from_link(&current_link_raw);
@@ -882,6 +898,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                     } else if key < current_key {
                         let new_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
                         if new_link.is_some() {
+                            last_left = Some(current_link);
                             raw_current_link = new_link;
                         } else {
                             return RangeCursor {
@@ -899,7 +916,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 RangeCursor {
                     cursor: Cursor {
                         tree: self,
-                        link: None,
+                        link: last_left,
                     },
                     bounds: range,
                 }
@@ -911,6 +928,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             Bound::Excluded(key) => {
                 let key = key.borrow();
 
+                let mut last_left = None;
                 let mut raw_current_link = self.root;
                 while let Some(current_link) = raw_current_link {
                     let current_link_raw = current_link.as_ptr();
@@ -919,6 +937,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                     if key < current_key {
                         let new_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
                         if new_link.is_some() {
+                            last_left = Some(current_link);
                             raw_current_link = new_link;
                         } else {
                             return RangeCursor {
@@ -936,7 +955,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 RangeCursor {
                     cursor: Cursor {
                         tree: self,
-                        link: None,
+                        link: last_left,
                     },
                     bounds: range,
                 }
@@ -1024,8 +1043,8 @@ impl<'a, T: RbNode<T, N>, const N: usize> Iterator for Cursor<'a, T, N> {
     }
 }
 
-impl<'a, T: RbNode<T, N>, const N: usize> DoubleEndedIterator for Cursor<'a, T, N> {
-    fn next_back(&mut self) -> Option<Self::Item> {
+impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
+    fn back(&mut self) -> Option<&T> {
         self.link?;
 
         let value_ref = unsafe {
@@ -1092,14 +1111,12 @@ impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> Iterator
             return None;
         }
 
-        self.next()
+        self.cursor.next()
     }
 }
 
-impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> DoubleEndedIterator
-    for RangeCursor<'a, T, R, N>
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
+impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> RangeCursor<'a, T, R, N> {
+    fn back(&mut self) -> Option<&T> {
         let link = self.cursor.link;
         let out_of_bounds = link.is_none_or(|link| {
             let link = link.as_ptr();
@@ -1115,6 +1132,6 @@ impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> DoubleEndedIte
             return None;
         }
 
-        self.next()
+        self.cursor.back()
     }
 }

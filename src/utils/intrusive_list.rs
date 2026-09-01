@@ -420,8 +420,8 @@ impl<'a, T: LinkedNode<T, N>, const N: usize> Iterator for ListCursorMut<'a, T, 
     }
 }
 
-impl<'a, T: LinkedNode<T, N>, const N: usize> DoubleEndedIterator for ListCursorMut<'a, T, N> {
-    fn next_back(&mut self) -> Option<Self::Item> {
+impl<'a, T: LinkedNode<T, N>, const N: usize> ListCursorMut<'a, T, N> {
+    pub fn back(&mut self) -> Option<&T> {
         if self.is_sentinel() {
             self.ptr = self.ptr.and_then(|ptr| unsafe { ptr.as_ref().prev.get() });
             return None;

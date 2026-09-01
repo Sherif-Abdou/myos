@@ -4,6 +4,7 @@ build/
 *.qcow2
 *.img
 *.dts
+**/compile_commands.json
 
 # Added by cargo
 

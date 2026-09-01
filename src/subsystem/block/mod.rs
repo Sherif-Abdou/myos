@@ -165,7 +165,7 @@ impl BlockCache {
 
         self.cache_count.fetch_add(1, SeqCst);
         sector_cursor.insert_before(block_entry.into());
-        let _ = sector_cursor.next_back();
+        let _ = sector_cursor.back();
 
         let block_entry = sector_cursor.get_arc().unwrap();
         block_entry.inner.lock().fetch_in_progress = true;

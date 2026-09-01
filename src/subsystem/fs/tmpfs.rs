@@ -102,7 +102,7 @@ impl InodeOperations for Mutex<InodeFile> {
                 let _ = cursor.next();
             } else {
                 cursor.insert_before(UniqueArc::<FileBlock>::zeroed().into());
-                let _ = cursor.next_back();
+                let _ = cursor.back();
             }
         }
 
