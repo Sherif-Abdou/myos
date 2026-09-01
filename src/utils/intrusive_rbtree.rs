@@ -1,15 +1,13 @@
 use core::{
+    borrow::Borrow,
     cell::Cell,
     marker::{PhantomData, PhantomPinned},
-    pin::{self, Pin},
+    pin::Pin,
     ptr::NonNull,
     sync::atomic::AtomicBool,
 };
 
-use crate::{
-    utils::{ArcInner, TreeArc},
-    write_sysreg,
-};
+use crate::utils::{Arc, ArcInner, ListArc, TreeArc};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum RbColor {
@@ -158,7 +156,8 @@ impl RbLinks {
         right
     }
 
-    /// Swaps the parent, left, and right pointers.
+    /// Swaps the parent, left, and right pointers. Currently doesn't work if self and other are
+    /// siblings.
     ///
     /// Does not change colors.
     ///
@@ -474,7 +473,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
     }
 
-    fn inorder_successor(&mut self, link: NonNull<RbLinks>) -> Option<NonNull<RbLinks>> {
+    fn inorder_successor(&self, link: NonNull<RbLinks>) -> Option<NonNull<RbLinks>> {
         let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
         if let Some(right) = unsafe { pinned_link.right() } {
             let mut cur_link = right;
@@ -502,7 +501,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         None
     }
 
-    fn inorder_predecessor(&mut self, link: NonNull<RbLinks>) -> Option<NonNull<RbLinks>> {
+    fn inorder_predecessor(&self, link: NonNull<RbLinks>) -> Option<NonNull<RbLinks>> {
         let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
         if let Some(left) = unsafe { pinned_link.left() } {
             let mut cur_link = left;
@@ -530,8 +529,11 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         None
     }
 
-    fn remove(&mut self, link: NonNull<RbLinks>) {
+    fn remove_link(&mut self, link: NonNull<RbLinks>) -> TreeArc<T, N> {
         let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
+
+        let tree_arc = T::arc_from_link(link.as_ptr());
+        let tree_arc = unsafe { TreeArc::from_arc_inner(NonNull::new_unchecked(tree_arc)) };
 
         let mut right = unsafe { pinned_link.right() };
 
@@ -540,6 +542,10 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 .inorder_successor(link)
                 .expect("If node has two children, it must have in order successor.");
             let pinned_successor = unsafe { Self::pin_nonnull_link(&successor) };
+            let local_color = pinned_link.color();
+            let succesor_color = pinned_successor.color();
+            pinned_successor.set_color(local_color);
+            pinned_link.set_color(succesor_color);
 
             unsafe {
                 if let Some(root) = pinned_link.swap_pointers(pinned_successor) {
@@ -562,7 +568,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             unsafe {
                 pinned_link.remove();
             }
-            return;
+            return tree_arc;
         } else if let Some(left) = unsafe { pinned_link.left() } {
             let pinned_left = unsafe { Self::pin_nonnull_link(&left) };
 
@@ -575,7 +581,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             unsafe {
                 pinned_link.remove();
             }
-            return;
+            return tree_arc;
         }
 
         if self.root == Some(link) {
@@ -583,14 +589,14 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 pinned_link.remove();
             }
             self.root = None;
-            return;
+            return tree_arc;
         }
 
         if pinned_link.color() == RbColor::Red {
             unsafe {
                 pinned_link.remove();
             }
-            return;
+            return tree_arc;
         }
 
         let direction = unsafe { pinned_link.direction().unwrap() };
@@ -601,6 +607,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
 
         self.color_remove(parent, direction);
+        tree_arc
     }
 
     fn color_remove(&mut self, parent: NonNull<RbLinks>, mut direction: Direction) {
@@ -705,6 +712,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
 
     fn color_insertion(&mut self, link: NonNull<RbLinks>) {
         let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
+        pinned_link.set_color(RbColor::Red);
 
         let parent = unsafe { pinned_link.parent() };
         let Some(parent) = parent else {
@@ -728,21 +736,19 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
 
         let pinned_grandparent = unsafe { Self::pin_nonnull_link(&grandparent) };
 
-        let uncle = unsafe {
-            pinned_link
-                .uncle()
-                .expect("An uncle should exist at this stage.")
-        };
-        let pinned_uncle = unsafe { Self::pin_nonnull_link(&uncle) };
+        let uncle = unsafe { pinned_link.uncle() };
 
-        if pinned_uncle.color() == RbColor::Red {
+        if uncle
+            .is_some_and(|uncle| unsafe { Self::pin_nonnull_link(&uncle).color() } == RbColor::Red)
+        {
             pinned_parent.set_color(RbColor::Black);
+            let uncle = uncle.as_ref().unwrap();
+            let pinned_uncle = unsafe { Self::pin_nonnull_link(&uncle) };
             pinned_uncle.set_color(RbColor::Black);
 
             self.color_insertion(grandparent);
         } else {
             assert_eq!(pinned_parent.color(), RbColor::Red);
-            assert_eq!(pinned_uncle.color(), RbColor::Black);
 
             let local_direction = unsafe { pinned_link.direction().unwrap() };
             let parent_direction = unsafe { pinned_parent.direction().unwrap() };
@@ -766,7 +772,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
     }
 
-    fn insert(&mut self, value: TreeArc<T, N>) {
+    pub fn insert(&mut self, value: TreeArc<T, N>) {
         let new_child_raw_ptr = unsafe { T::link_from_arc(value.into_arc_inner().as_ptr()) };
         let new_child_key = T::key_from_link(&new_child_raw_ptr);
         let new_child = unsafe { NonNull::new_unchecked(new_child_raw_ptr) };
@@ -805,5 +811,132 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 }
             }
         }
+    }
+
+    pub fn remove_key<K: Borrow<T::Key>>(&mut self, key: K) -> Option<TreeArc<T, N>> {
+        let key = key.borrow();
+
+        let mut raw_current_link = self.root;
+        while let Some(current_link) = raw_current_link {
+            let current_link_raw = current_link.as_ptr();
+            let current_key = T::key_from_link(&current_link_raw);
+
+            if key == current_key {
+                return Some(self.remove_link(current_link));
+            } else if key < current_key {
+                raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
+            } else {
+                raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).right() };
+            }
+        }
+        None
+
+    }
+
+    pub fn find<K: Borrow<T::Key>>(&self, key: K) -> Option<Arc<T>> {
+        let key = key.borrow();
+
+        let mut raw_current_link = self.root;
+        while let Some(current_link) = raw_current_link {
+            let current_link_raw = current_link.as_ptr();
+            let current_key = T::key_from_link(&current_link_raw);
+
+            if key == current_key {
+                return Some(unsafe { (*T::arc_from_link(current_link.as_ptr())).make_arc() });
+            } else if key < current_key {
+                raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
+            } else {
+                raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).right() };
+            }
+        }
+        None
+    }
+
+    pub fn cursor_at_key<K: Borrow<T::Key>>(&self, key: K) -> Option<Cursor<'_, T, N>> {
+        let key = key.borrow();
+
+        let mut raw_current_link = self.root;
+        while let Some(current_link) = raw_current_link {
+            let current_link_raw = current_link.as_ptr();
+            let current_key = T::key_from_link(&current_link_raw);
+
+            if key == current_key {
+                return Some(Cursor {
+                    tree: self,
+                    link: Some(current_link),
+                });
+            } else if key < current_key {
+                raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
+            } else {
+                raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).right() };
+            }
+        }
+        None
+    }
+
+    /// SAFETY: Caller must gurantee that the node is present within this tree.
+    pub unsafe fn cursor_at_node(&self, node: Arc<T>) -> Cursor<'_, T, N> {
+        let link = NonNull::new(unsafe { T::link_from_arc(node.as_inner_ptr() as _) });
+
+        Cursor { tree: self, link }
+    }
+
+    pub fn cursor(&self) -> Cursor<'_, T, N> {
+        if let Some(root) = self.root {
+            let mut node = root;
+            let mut pinned_node = unsafe { Self::pin_nonnull_link(&node) };
+            let mut possible_left = unsafe { pinned_node.left() };
+            while let Some(left) = possible_left {
+                node = left;
+                pinned_node = unsafe { Self::pin_nonnull_link(&left) };
+                possible_left = unsafe { pinned_node.left() };
+            }
+            Cursor {
+                tree: self,
+                link: Some(node),
+            }
+        } else {
+            Cursor {
+                tree: self,
+                link: None,
+            }
+        }
+    }
+}
+
+pub struct Cursor<'a, T: RbNode<T, N>, const N: usize = 0> {
+    tree: &'a RbTree<T, N>,
+    link: Option<NonNull<RbLinks>>,
+}
+
+impl<'a, T: RbNode<T, N>, const N: usize> Iterator for Cursor<'a, T, N> {
+    type Item = Arc<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.link?;
+
+        let arc = unsafe { (*T::arc_from_link(self.link.unwrap().as_ptr())).make_arc() };
+
+        self.link = self.tree.inorder_successor(self.link.unwrap());
+
+        Some(arc)
+    }
+}
+
+impl<'a, T: RbNode<T, N>, const N: usize> DoubleEndedIterator for Cursor<'a, T, N> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.link?;
+
+        let arc = unsafe { (*T::arc_from_link(self.link.unwrap().as_ptr())).make_arc() };
+
+        self.link = self.tree.inorder_predecessor(self.link.unwrap());
+
+        Some(arc)
+    }
+}
+
+impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
+    pub fn get_arc(&self) -> Arc<T> {
+        unsafe { (*T::arc_from_link(self.link.unwrap().as_ptr())).make_arc() }
     }
 }
