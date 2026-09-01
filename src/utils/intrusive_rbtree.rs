@@ -2,12 +2,13 @@ use core::{
     borrow::Borrow,
     cell::Cell,
     marker::{PhantomData, PhantomPinned},
+    ops::{Bound, RangeBounds},
     pin::Pin,
     ptr::NonNull,
     sync::atomic::AtomicBool,
 };
 
-use crate::utils::{Arc, ArcInner, ListArc, TreeArc};
+use crate::utils::{Arc, ArcInner, TreeArc};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum RbColor {
@@ -400,10 +401,12 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
     }
 
+    /// SAFETY: Assumes link is a part of this tree.
     unsafe fn pin_link(link: &*mut RbLinks) -> Pin<&RbLinks> {
         unsafe { Pin::new_unchecked(link.as_ref().unwrap()) }
     }
 
+    /// SAFETY: Assumes link is a part of this tree.
     unsafe fn pin_nonnull_link(link: &NonNull<RbLinks>) -> Pin<&RbLinks> {
         unsafe { Pin::new_unchecked(link.as_ref()) }
     }
@@ -529,7 +532,10 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         None
     }
 
-    fn remove_link(&mut self, link: NonNull<RbLinks>) -> TreeArc<T, N> {
+    /// Removes link from the tree, handling all recolors and relocations.
+    ///
+    /// SAFETY: Assumes `link` is a part of this tree.
+    unsafe fn remove_link(&mut self, link: NonNull<RbLinks>) -> TreeArc<T, N> {
         let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
 
         let tree_arc = T::arc_from_link(link.as_ptr());
@@ -610,6 +616,8 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         tree_arc
     }
 
+    /// Recolors and rotates from removing `parent`'s child at `direction`,
+    /// specifically when the deleted link was black with no children.
     fn color_remove(&mut self, parent: NonNull<RbLinks>, mut direction: Direction) {
         macro_rules! pin_nonnull {
             ($link:expr) => {
@@ -710,6 +718,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
     }
 
+    /// Recolors and rotates as a result of the insertion of `link`
     fn color_insertion(&mut self, link: NonNull<RbLinks>) {
         let pinned_link = unsafe { Self::pin_nonnull_link(&link) };
         pinned_link.set_color(RbColor::Red);
@@ -743,7 +752,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         {
             pinned_parent.set_color(RbColor::Black);
             let uncle = uncle.as_ref().unwrap();
-            let pinned_uncle = unsafe { Self::pin_nonnull_link(&uncle) };
+            let pinned_uncle = unsafe { Self::pin_nonnull_link(uncle) };
             pinned_uncle.set_color(RbColor::Black);
 
             self.color_insertion(grandparent);
@@ -772,6 +781,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
     }
 
+    /// Inserts a node into the RB Tree, and performs any necessary recoloring and rotations.
     pub fn insert(&mut self, value: TreeArc<T, N>) {
         let new_child_raw_ptr = unsafe { T::link_from_arc(value.into_arc_inner().as_ptr()) };
         let new_child_key = T::key_from_link(&new_child_raw_ptr);
@@ -822,7 +832,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             let current_key = T::key_from_link(&current_link_raw);
 
             if key == current_key {
-                return Some(self.remove_link(current_link));
+                return Some(unsafe { self.remove_link(current_link) });
             } else if key < current_key {
                 raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
             } else {
@@ -830,7 +840,6 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             }
         }
         None
-
     }
 
     pub fn find<K: Borrow<T::Key>>(&self, key: K) -> Option<Arc<T>> {
@@ -850,6 +859,93 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             }
         }
         None
+    }
+
+    pub fn range_find<R: RangeBounds<T::Key>>(&self, range: R) -> RangeCursor<'_, T, R, N> {
+        match range.start_bound() {
+            Bound::Included(key) => {
+                let key = key.borrow();
+
+                let mut raw_current_link = self.root;
+                while let Some(current_link) = raw_current_link {
+                    let current_link_raw = current_link.as_ptr();
+                    let current_key = T::key_from_link(&current_link_raw);
+
+                    if key == current_key {
+                        return RangeCursor {
+                            cursor: Cursor {
+                                tree: self,
+                                link: raw_current_link,
+                            },
+                            bounds: range,
+                        };
+                    } else if key < current_key {
+                        let new_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
+                        if new_link.is_some() {
+                            raw_current_link = new_link;
+                        } else {
+                            return RangeCursor {
+                                cursor: Cursor {
+                                    tree: self,
+                                    link: raw_current_link,
+                                },
+                                bounds: range,
+                            };
+                        }
+                    } else {
+                        raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).right() };
+                    }
+                }
+                RangeCursor {
+                    cursor: Cursor {
+                        tree: self,
+                        link: None,
+                    },
+                    bounds: range,
+                }
+            }
+            // Difference is you don't jump out early in the key == current_key case, you go right
+            // for something greater.
+            //
+            // TODO: Factor common code with above.
+            Bound::Excluded(key) => {
+                let key = key.borrow();
+
+                let mut raw_current_link = self.root;
+                while let Some(current_link) = raw_current_link {
+                    let current_link_raw = current_link.as_ptr();
+                    let current_key = T::key_from_link(&current_link_raw);
+
+                    if key < current_key {
+                        let new_link = unsafe { Self::pin_nonnull_link(&current_link).left() };
+                        if new_link.is_some() {
+                            raw_current_link = new_link;
+                        } else {
+                            return RangeCursor {
+                                cursor: Cursor {
+                                    tree: self,
+                                    link: raw_current_link,
+                                },
+                                bounds: range,
+                            };
+                        }
+                    } else {
+                        raw_current_link = unsafe { Self::pin_nonnull_link(&current_link).right() };
+                    }
+                }
+                RangeCursor {
+                    cursor: Cursor {
+                        tree: self,
+                        link: None,
+                    },
+                    bounds: range,
+                }
+            }
+            Bound::Unbounded => RangeCursor {
+                cursor: self.cursor(),
+                bounds: range,
+            },
+        }
     }
 
     pub fn cursor_at_key<K: Borrow<T::Key>>(&self, key: K) -> Option<Cursor<'_, T, N>> {
@@ -910,12 +1006,17 @@ pub struct Cursor<'a, T: RbNode<T, N>, const N: usize = 0> {
 }
 
 impl<'a, T: RbNode<T, N>, const N: usize> Iterator for Cursor<'a, T, N> {
-    type Item = Arc<T>;
+    type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.link?;
 
-        let arc = unsafe { (*T::arc_from_link(self.link.unwrap().as_ptr())).make_arc() };
+        let arc = unsafe {
+            (*T::arc_from_link(self.link.unwrap().as_ptr()))
+                .as_raw()
+                .as_ref()
+                .unwrap()
+        };
 
         self.link = self.tree.inorder_successor(self.link.unwrap());
 
@@ -927,16 +1028,93 @@ impl<'a, T: RbNode<T, N>, const N: usize> DoubleEndedIterator for Cursor<'a, T, 
     fn next_back(&mut self) -> Option<Self::Item> {
         self.link?;
 
-        let arc = unsafe { (*T::arc_from_link(self.link.unwrap().as_ptr())).make_arc() };
+        let value_ref = unsafe {
+            (*T::arc_from_link(self.link.unwrap().as_ptr()))
+                .as_raw()
+                .as_ref()
+                .unwrap()
+        };
 
         self.link = self.tree.inorder_predecessor(self.link.unwrap());
 
-        Some(arc)
+        Some(value_ref)
     }
 }
 
 impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
+    pub fn get(&self) -> &'_ T {
+        unsafe {
+            (*T::arc_from_link(self.link.unwrap().as_ptr()))
+                .as_raw()
+                .as_ref()
+                .unwrap()
+        }
+    }
+
     pub fn get_arc(&self) -> Arc<T> {
         unsafe { (*T::arc_from_link(self.link.unwrap().as_ptr())).make_arc() }
+    }
+}
+
+pub struct RangeCursor<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize = 0> {
+    cursor: Cursor<'a, T, N>,
+    bounds: R,
+}
+
+impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> RangeCursor<'a, T, R, N> {
+    pub fn get(&self) -> &'_ T {
+        self.cursor.get()
+    }
+
+    pub fn get_arc(&self) -> Arc<T> {
+        self.cursor.get_arc()
+    }
+}
+
+impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> Iterator
+    for RangeCursor<'a, T, R, N>
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let link = self.cursor.link;
+        let out_of_bounds = link.is_none_or(|link| {
+            let link = link.as_ptr();
+            let key = T::key_from_link(&link);
+            match self.bounds.end_bound() {
+                Bound::Included(bound) => key > bound,
+                Bound::Excluded(bound) => key >= bound,
+                Bound::Unbounded => false,
+            }
+        });
+
+        if out_of_bounds {
+            return None;
+        }
+
+        self.next()
+    }
+}
+
+impl<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize> DoubleEndedIterator
+    for RangeCursor<'a, T, R, N>
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let link = self.cursor.link;
+        let out_of_bounds = link.is_none_or(|link| {
+            let link = link.as_ptr();
+            let key = T::key_from_link(&link);
+            match self.bounds.start_bound() {
+                Bound::Included(bound) => key < bound,
+                Bound::Excluded(bound) => key <= bound,
+                Bound::Unbounded => false,
+            }
+        });
+
+        if out_of_bounds {
+            return None;
+        }
+
+        self.next()
     }
 }
