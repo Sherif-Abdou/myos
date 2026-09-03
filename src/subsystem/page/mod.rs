@@ -1,3 +1,6 @@
+mod meta;
+pub use meta::*;
+
 use core::{
     alloc::Layout,
     arch::asm,
@@ -11,6 +14,7 @@ use crate::{
     allocators::KERNEL_ALLOCATOR,
     dtb::FdtNode,
     impl_link,
+    memory::Pfn,
     utils::{
         Arc, List, ListLinks, OnceSpinLock, PhysAddr, SpinLock, UniqueArc,
         with_core_critical_section,
@@ -407,7 +411,7 @@ impl ArmPageTableRoot {
 
             let handle = self.descriptor_for_vma_or_create(virtual_addr);
 
-            handle.map_page(phys_addr);
+            handle.map_phys_addr(phys_addr);
         }
     }
 
@@ -478,7 +482,7 @@ unsafe impl Send for ArmDescriptorGroupManager {}
 unsafe impl Sync for ArmDescriptorGroupManager {}
 
 impl ArmDescriptorGroupManager {
-    pub fn map_page(&self, index: usize, phys_addr: usize) {
+    pub fn map_phys_addr(&self, index: usize, phys_addr: usize) {
         assert!(phys_addr.is_multiple_of(4096));
 
         unsafe {
@@ -607,8 +611,25 @@ impl ArmDescriptorHandle {
         Self { group, index }
     }
 
-    pub fn map_page(&self, phys_addr: usize) {
-        self.group.map_page(self.index, phys_addr);
+    pub fn map_phys_addr(&self, phys_addr: usize) {
+        self.group.map_phys_addr(self.index, phys_addr);
+    }
+
+    pub fn map_page(&self, pfn: Pfn) {
+        self.group.map_phys_addr(self.index, pfn.number() << 12);
+    }
+
+    pub fn get_page(&self) -> Option<Pfn> {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        if group[self.index].valid() {
+            Some(Pfn::from_phys_addr(PhysAddr::from_raw_addr(
+                group[self.index].get_phys_address(),
+            )))
+        } else {
+            None
+        }
     }
 
     pub fn is_lowest_layer(&self) -> bool {

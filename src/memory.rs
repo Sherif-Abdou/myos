@@ -1,6 +1,11 @@
-use core::ptr;
+use core::{mem::MaybeUninit, ptr};
 
-use crate::{dtb::FdtNode, early_printk, utils::SpinLock};
+use crate::{
+    dtb::FdtNode,
+    early_printk,
+    subsystem::PageMeta,
+    utils::{OnceSpinLock, PhysAddr, SpinLock},
+};
 
 /// Page number
 #[repr(transparent)]
@@ -8,6 +13,10 @@ use crate::{dtb::FdtNode, early_printk, utils::SpinLock};
 pub struct Pfn(usize);
 
 impl Pfn {
+    pub const fn from_phys_addr(phys_addr: PhysAddr) -> Self {
+        Pfn(phys_addr.get() >> PAGE_SHIFT)
+    }
+
     pub const fn from_virt_addr(virt: usize) -> Self {
         Pfn((virt & 0xffffffff) >> PAGE_SHIFT)
     }
@@ -22,7 +31,7 @@ impl Pfn {
         self.0
     }
 
-    pub const fn as_ptr(&self) -> *mut u8 {
+    pub const fn as_kernel_ptr(&self) -> *mut u8 {
         ((self.0 * PAGE_SIZE) | 0xffffff80_00000000) as *mut u8
     }
 }
@@ -122,6 +131,82 @@ impl PageAllocator<'_> {
     }
 }
 
+/// Represents an allocation of physically continuous pages.
+///
+/// Automatically frees the pages upon being dropped.
+pub struct PageAllocationHandle {
+    pfn: Pfn,
+    count: usize,
+}
+
+impl PageAllocationHandle {
+    pub fn allocate(count: usize) -> Result<Self, ()> {
+        let pfn = PAGE_ALLOCATOR.lock().reserve_pages(count).ok_or(())?;
+
+        Ok(Self { pfn, count })
+    }
+}
+
+impl Drop for PageAllocationHandle {
+    fn drop(&mut self) {
+        PAGE_ALLOCATOR.lock().mark_free(self.pfn, self.count);
+    }
+}
+
+pub struct PageAllocatedBuffer {
+    handle: PageAllocationHandle,
+    offset: usize,
+    len: usize,
+}
+
+impl PageAllocatedBuffer {
+    pub fn create_buffer(len: usize) -> Result<Self, ()> {
+        Self::create_buffer_with_offset(len, 0)
+    }
+
+    pub fn create_buffer_with_offset(len: usize, offset: usize) -> Result<Self, ()> {
+        let necessary_pages = (len + offset).div_ceil(4096);
+
+        let handle = PageAllocationHandle::allocate(necessary_pages)?;
+
+        Ok(Self {
+            handle,
+            offset,
+            len,
+        })
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        AsRef::<[u8]>::as_ref(self)
+    }
+
+    pub fn as_mut_slice(&mut self) -> &[u8] {
+        AsMut::<[u8]>::as_mut(self)
+    }
+}
+
+impl AsRef<[u8]> for PageAllocatedBuffer {
+    fn as_ref(&self) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.handle.pfn.as_kernel_ptr().byte_add(self.offset),
+                self.len,
+            )
+        }
+    }
+}
+
+impl AsMut<[u8]> for PageAllocatedBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.handle.pfn.as_kernel_ptr().byte_add(self.offset),
+                self.len,
+            )
+        }
+    }
+}
+
 unsafe extern "C" {
     unsafe static mut __kernel_start: usize;
     unsafe static mut __kernel_end: usize;
@@ -136,6 +221,48 @@ pub static PAGE_ALLOCATOR: SpinLock<PageAllocator> = SpinLock::new(PageAllocator
     offset: 0,
 });
 
+struct Pages {
+    pages: &'static [PageMeta],
+    offset: usize,
+}
+static PAGES: OnceSpinLock<Pages> = OnceSpinLock::new();
+
+pub fn page_from_pfn(pfn: Pfn) -> &'static PageMeta {
+    let pages = PAGES.get().unwrap();
+
+    &pages.pages[pfn.number() - pages.offset]
+}
+
+fn init_page_array(memory_start: usize, memory_size: usize) {
+    let mut allocator = PAGE_ALLOCATOR.lock();
+    let number_of_pages = memory_size / PAGE_SIZE;
+    let pages_needed = ((number_of_pages) * core::mem::size_of::<PageMeta>()).div_ceil(PAGE_SIZE);
+    let allocation = allocator.reserve_pages(pages_needed).unwrap();
+
+    let vma = allocation.as_kernel_ptr();
+
+    let slice = unsafe {
+        core::slice::from_raw_parts_mut(vma.cast::<MaybeUninit<PageMeta>>(), number_of_pages)
+    };
+
+    let base_page = memory_start / PAGE_SIZE;
+
+    for (i, page) in slice.iter_mut().enumerate() {
+        if allocator.is_free(Pfn::from(base_page + i)) {
+            page.write(PageMeta::new_unused());
+        } else {
+            page.write(PageMeta::new_kernel());
+        }
+    }
+
+    let pages = unsafe { slice.assume_init_ref() };
+
+    let _ = PAGES.set(Pages {
+        pages,
+        offset: base_page,
+    });
+}
+
 pub fn init_allocator(memory: &FdtNode) {
     let memory_start = memory.read_u64("reg", 0).unwrap() as usize;
     let memory_size = memory.read_u64("reg", 1).unwrap() as usize;
@@ -146,7 +273,7 @@ pub fn init_allocator(memory: &FdtNode) {
         memory_start + memory_size
     );
 
-    let kernel_end_ptr = (&raw mut __kernel_end);
+    let kernel_end_ptr: *mut u8 = ptr::with_exposed_provenance_mut((&raw mut __kernel_end).addr());
     let next_page =
         unsafe { kernel_end_ptr.byte_offset(kernel_end_ptr.align_offset(PAGE_SIZE) as isize) };
 
@@ -170,4 +297,8 @@ pub fn init_allocator(memory: &FdtNode) {
     allocator.mark_used(kernel_image_pfn, kernel_image_page_count);
     // Reserve the page bitmask
     allocator.mark_used(bitmask_pfn, bitmask_page_count);
+
+    drop(allocator);
+
+    init_page_array(memory_start, memory_size);
 }

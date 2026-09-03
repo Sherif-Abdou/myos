@@ -388,7 +388,7 @@ macro_rules! impl_rblink {
     };
 }
 
-struct RbTree<T: RbNode<T, N>, const N: usize = 0> {
+pub struct RbTree<T: RbNode<T, N>, const N: usize = 0> {
     root: Option<NonNull<RbLinks>>,
     _phantom: PhantomData<T>,
 }
@@ -855,6 +855,13 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             }
         }
         None
+    }
+
+    /// SAFETY: Value must be a part of this tree.
+    pub unsafe fn remove_ptr(&mut self, value: Arc<T>) -> TreeArc<T, N> {
+        let inner = unsafe { value.as_inner_ptr() };
+
+        unsafe { self.remove_link(NonNull::new_unchecked(T::link_from_arc(inner as _))) }
     }
 
     pub fn find<K: Borrow<T::Key>>(&self, key: K) -> Option<Arc<T>> {

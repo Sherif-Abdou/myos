@@ -6,7 +6,7 @@ use core::{
 
 use crate::{
     allocators::align_up,
-    memory::{PAGE_ALLOCATOR, PAGE_SIZE},
+    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, page_from_pfn},
     utils::SpinLock,
 };
 
@@ -148,7 +148,12 @@ impl LLAllocator {
     fn claim_more_memory(&mut self, size_hint: usize) {
         let pages = (size_hint.div_ceil(PAGE_SIZE) + 1).max(8);
         let block = PAGE_ALLOCATOR.lock().reserve_pages(pages).unwrap();
-        let ll_hole: *mut LLHole = block.as_ptr().cast();
+
+        for page in block.number()..(block.number() + pages) {
+            page_from_pfn(Pfn::from(page)).spin_lock().set_kernel();
+        }
+
+        let ll_hole: *mut LLHole = block.as_kernel_ptr().cast();
         let ll_hole_addr = ll_hole.addr();
         unsafe {
             (*ll_hole).size = pages * PAGE_SIZE;

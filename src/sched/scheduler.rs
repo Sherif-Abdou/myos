@@ -1,6 +1,7 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
+    allocators::KERNEL_ALLOCATOR,
     cpu_local,
     interrupts::{ExceptionRegisters, daifclr, daifset},
     printk,

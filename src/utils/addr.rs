@@ -6,6 +6,10 @@ impl PhysAddr {
     pub const fn get(&self) -> usize {
         self.0
     }
+
+    pub const fn from_raw_addr(address: usize) -> Self {
+        Self(address)
+    }
 }
 
 const PHYS_ADDR_MASK: usize = 0x7fffffffff;

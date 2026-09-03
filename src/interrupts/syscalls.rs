@@ -52,11 +52,16 @@ pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
             (*regs).gprs[0] = str.len() as u64;
         }
     } else {
-        let buf = unsafe { slice::from_raw_parts(addr, len) };
+        let user_buf = unsafe { slice::from_raw_parts(addr, len) };
+
+        let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
 
         let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-        let ret = task.user_fd_table().unwrap().write(descriptor, buf);
+        let ret = task
+            .user_fd_table()
+            .unwrap()
+            .write(descriptor, &kernel_buf[..len]);
 
         unsafe {
             (*regs).gprs[0] = ret as u64;
@@ -242,7 +247,15 @@ pub fn waitpid(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
     if let Some(child) = task.find_child(pid) {
-        child.completion_waiters.enqueue_and_block();
+        if child
+            .completion_waiters
+            .prepare_enqueue(|| !child.is_done())
+        {
+            child.completion_waiters.block();
+        }
+        unsafe {
+            (*regs).gprs[0] = 0;
+        }
     } else {
         unsafe {
             (*regs).gprs[0] = -1i64 as u64;

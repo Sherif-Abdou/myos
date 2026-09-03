@@ -42,7 +42,8 @@ impl<T> Arc<T> {
             .unwrap();
         let mut inner: NonNull<ArcInner<T>> = memory.cast();
 
-        unsafe { inner.as_mut().count = AtomicUsize::new(1) };
+        let count_ptr = unsafe { &raw mut inner.as_mut().count };
+        unsafe { count_ptr.write(AtomicUsize::new(1)) };
 
         Self { inner }
     }
