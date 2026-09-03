@@ -1,14 +1,11 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec},
-    elf::{ElfParser, ElfSource, Segment},
-    impl_link,
-    interrupts::ExceptionRegisters,
-    sched::{Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, restore_regs_and_eret},
-    subsystem::{ArmPageTableRoot, Inode},
-    utils::{
-        Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, UniqueArc, with_core_critical_section,
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec}, elf::{ElfParser, ElfSource, Segment}, impl_link, interrupts::ExceptionRegisters, memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, page_from_pfn}, sched::{
+        Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, cpu_current_task, restore_regs_and_eret,
+    }, subsystem::{AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, VmaAllocatedArea}, utils::{
+        Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, TreeArc, UniqueArc,
+        with_core_critical_section,
     },
 };
 
@@ -82,6 +79,56 @@ impl UserTaskStack {
     }
 }
 
+struct UserSpaceHeap {
+    vma_area: Arc<VmaAllocatedArea>,
+    anon_vma: Arc<AnonPageMeta>,
+}
+
+
+impl UserSpaceHeap {
+    pub fn new(base_vma: usize) -> Self {
+        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, 0));
+        let anon_vma = Arc::new(AnonPageMeta::new(None));
+
+        anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
+
+        Self { vma_area, anon_vma }
+    }
+
+    fn contains_vma(&self, vma: usize) -> bool {
+        self.vma_area.vma() <= vma && vma < self.end_of_heap()
+    }
+
+    fn end_of_heap(&self) -> usize {
+        self.vma_area.vma() + self.vma_area.pfn_count() * PAGE_SIZE
+    }
+
+    pub fn modify_pfn_offset(&self, offset: isize) -> usize {
+        self.vma_area.modify_pfn_count(offset)
+    }
+
+    fn page_fault(&self, fault_vma: usize) -> Result<(), PageFaultError> {
+        let byte_offset = fault_vma - self.vma_area.vma();
+        let page_offset = byte_offset / PAGE_SIZE;
+        if page_offset >= self.vma_area.pfn_count() {
+            return Err(PageFaultError::Unhandled);
+        }
+
+        let pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
+
+        let page = page_from_pfn(pfn);
+        page.inc_refcount();
+        page.spin_lock().set_anon(self.anon_vma.clone());
+
+        let task = cpu_current_task().unwrap();
+
+        task.process
+            .map_page_range(fault_vma & !(PAGE_SIZE - 1), pfn, 1);
+
+        Ok(())
+    }
+}
+
 pub struct UserSpaceProcess {
     pub(crate) page_table: SpinLock<ArmPageTableRoot>,
     pub(crate) user_stack: SpinLock<KBox<UserTaskStack>>,
@@ -91,6 +138,12 @@ pub struct UserSpaceProcess {
 }
 
 impl UserSpaceProcess {
+    fn map_page_range(&self, vma: usize, pfn: Pfn, count: usize) {
+        self.page_table
+            .lock()
+            .map_page_range(vma, pfn.phys_addr(), count);
+    }
+
     fn fork(&self) -> UserSpaceProcess {
         let new_page_table = ArmPageTableRoot::create_user();
 
@@ -145,6 +198,15 @@ pub enum Process {
 }
 
 impl Process {
+    fn map_page_range(&self, vma: usize, pfn: Pfn, count: usize) {
+        match self {
+            Process::Kernel(_) => todo!(),
+            Process::User(user_space_process) => {
+                user_space_process.map_page_range(vma, pfn, count);
+            }
+        }
+    }
+
     pub fn exec<S: ElfSource>(&self, parser: &ElfParser<S>, args: &[u8]) {
         let Process::User(user_process) = self else {
             return;

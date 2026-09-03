@@ -31,6 +31,10 @@ impl Pfn {
         self.0
     }
 
+    pub const fn phys_addr(&self) -> PhysAddr {
+        PhysAddr::from_raw_addr(self.0 * PAGE_SIZE)
+    }
+
     pub const fn as_kernel_ptr(&self) -> *mut u8 {
         ((self.0 * PAGE_SIZE) | 0xffffff80_00000000) as *mut u8
     }

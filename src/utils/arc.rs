@@ -53,6 +53,7 @@ pub fn arc_inner_offset<T>() -> usize {
     offset_of!(ArcInner<T>, inner)
 }
 
+#[derive(Debug)]
 pub struct Arc<T: ?Sized> {
     inner: NonNull<ArcInner<T>>,
 }
@@ -151,6 +152,7 @@ pub fn expect_downcast_ref<T: 'static>(value: Option<&ArcAny>) -> &T {
         .expect("Expected value to be nonull")
 }
 
+#[derive(Debug)]
 pub struct UniqueArc<T: ?Sized> {
     inner: Arc<T>,
 }
@@ -201,6 +203,7 @@ impl<T: ?Sized> DerefMut for UniqueArc<T> {
 
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<UniqueArc<U>> for UniqueArc<T> {}
 
+#[derive(Debug)]
 pub struct ListArc<T: ?Sized + LinkedNode<T, N>, const N: usize> {
     inner: Arc<T>,
 }
@@ -284,6 +287,7 @@ impl<T: LinkedNode<T, N> + Unsize<U>, U: LinkedNode<U, N>, const N: usize>
 {
 }
 
+#[derive(Debug)]
 pub struct TreeArc<T: ?Sized + RbNode<T, N>, const N: usize> {
     inner: Arc<T>,
 }

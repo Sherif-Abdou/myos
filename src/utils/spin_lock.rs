@@ -7,6 +7,7 @@ use core::{
 };
 
 /// Primitive Spinlock, provides synchronization between multiple cores.
+#[derive(Debug)]
 pub struct SpinLock<T> {
     inner: UnsafeCell<T>,
     lock: AtomicUsize,

@@ -31,6 +31,7 @@ impl Direction {
     }
 }
 
+#[derive(Debug)]
 pub struct RbLinks {
     parent: Cell<Option<NonNull<RbLinks>>>,
     left: Cell<Option<NonNull<RbLinks>>>,

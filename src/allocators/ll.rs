@@ -149,8 +149,10 @@ impl LLAllocator {
         let pages = (size_hint.div_ceil(PAGE_SIZE) + 1).max(8);
         let block = PAGE_ALLOCATOR.lock().reserve_pages(pages).unwrap();
 
-        for page in block.number()..(block.number() + pages) {
-            page_from_pfn(Pfn::from(page)).spin_lock().set_kernel();
+        for pfn in block.number()..(block.number() + pages) {
+            let page = page_from_pfn(Pfn::from(pfn));
+            page.inc_refcount();
+            page.spin_lock().set_kernel();
         }
 
         let ll_hole: *mut LLHole = block.as_kernel_ptr().cast();

@@ -14,6 +14,10 @@ pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
 
 pub const STACK_VIRTUAL_ADDR: usize = 0x800000;
 
+pub fn cpu_current_task() -> Option<Arc<Task>> {
+    SCHEDULER.get().unwrap().local_task()
+}
+
 pub fn init_scheduler() {
     assert!(
         SCHEDULER

@@ -1,5 +1,8 @@
 mod meta;
+mod fault;
+
 pub use meta::*;
+pub use fault::*;
 
 use core::{
     alloc::Layout,

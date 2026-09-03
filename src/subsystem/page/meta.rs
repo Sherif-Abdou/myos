@@ -8,7 +8,7 @@ use core::{
 use crate::{
     impl_rblink,
     interrupts::daifset,
-    utils::{Arc, RbLinks, RbTree, SpinLock},
+    utils::{Arc, ListArc, RbLinks, RbTree, SpinLock, TreeArc},
 };
 
 // Page types: 3 bits
@@ -94,13 +94,41 @@ impl PageFlags {
 }
 
 /// Represents an anonymous area actively backed by pages.
+#[derive(Debug)]
 pub struct VmaAllocatedArea {
     /// Virtual address of the page area.
     vma: usize,
     /// Number of pages allocated
-    pfn_count: usize,
+    pfn_count: SpinLock<usize>,
     // Link to a reverse mapping tree
     link: RbLinks,
+}
+
+impl VmaAllocatedArea {
+    pub fn new(vma: usize, pfn_count: usize) -> Self {
+        Self {
+            vma,
+            pfn_count: SpinLock::new(pfn_count),
+            link: RbLinks::new(),
+        }
+    }
+
+    pub fn vma(&self) -> usize {
+        self.vma
+    }
+
+    pub fn pfn_count(&self) -> usize {
+        *self.pfn_count.lock()
+    }
+
+    pub fn modify_pfn_count(&self, offset: isize) -> usize {
+        let mut lock = self.pfn_count.lock();
+        let modified = (*lock).saturating_add_signed(offset);
+
+        (*lock) = modified;
+
+        modified
+    }
 }
 
 impl_rblink!(VmaAllocatedArea, let vma: usize = { 0 => link });
@@ -109,6 +137,25 @@ pub struct AnonPageMeta {
     parent: Option<Arc<AnonPageMeta>>,
     vma_tree: SpinLock<RbTree<VmaAllocatedArea>>,
 }
+
+impl AnonPageMeta {
+    pub fn new(parent: Option<Arc<AnonPageMeta>>) -> Self {
+        Self {
+            parent,
+            vma_tree: SpinLock::new(RbTree::new()),
+        }
+    }
+
+    pub fn insert_vma_area(&self, area: TreeArc<VmaAllocatedArea, 0>) {
+        self.vma_tree.lock().insert(area);
+    }
+
+    pub unsafe fn remove_vma_area(&self, area: Arc<VmaAllocatedArea>) {
+        unsafe { self.vma_tree.lock().remove_ptr(area) };
+    }
+}
+
+impl AnonPageMeta {}
 
 #[repr(C)]
 union InternalPageMetaType {
@@ -203,7 +250,7 @@ impl PageMeta {
 
     pub const fn new_kernel() -> PageMeta {
         Self {
-            refcount: AtomicU32::new(0),
+            refcount: AtomicU32::new(1),
             flags: PageFlags(AtomicU32::new(1 << PageFlags::PAGE_TYPE_SHIFT)),
             meta: UnsafeCell::new(MaybeUninit::uninit()),
         }
