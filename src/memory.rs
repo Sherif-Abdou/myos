@@ -40,6 +40,15 @@ impl Pfn {
     }
 }
 
+pub fn copy_pfn(dst: Pfn, src: Pfn) {
+    let dst_addr = dst.as_kernel_ptr();
+    let src_addr = src.as_kernel_ptr();
+
+    unsafe {
+        dst_addr.copy_from_nonoverlapping(src_addr, PAGE_SIZE);
+    }
+}
+
 impl From<usize> for Pfn {
     fn from(value: usize) -> Self {
         Pfn(value)
@@ -235,6 +244,18 @@ pub fn page_from_pfn(pfn: Pfn) -> &'static PageMeta {
     let pages = PAGES.get().unwrap();
 
     &pages.pages[pfn.number() - pages.offset]
+}
+
+pub fn pfn_from_page(page: &PageMeta) -> Pfn {
+    let pages = PAGES.get().unwrap();
+
+    let page_addr = &raw const *page;
+    let base_addr = pages.pages.as_ptr();
+
+    let index = unsafe { page_addr.offset_from(base_addr) };
+    assert!(index >= 0);
+
+    Pfn::from(index as usize + pages.offset)
 }
 
 fn init_page_array(memory_start: usize, memory_size: usize) {

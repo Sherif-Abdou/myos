@@ -1,8 +1,8 @@
-mod meta;
 mod fault;
+mod meta;
 
-pub use meta::*;
 pub use fault::*;
+pub use meta::*;
 
 use core::{
     alloc::Layout,
@@ -418,20 +418,25 @@ impl ArmPageTableRoot {
         }
     }
 
-    // TODO: Finish
-    pub fn for_each_valid_page<F: Fn(usize, &ArmPageDescriptor)>(&self, func: F) {
+    pub fn for_each_valid_page<F: Fn(usize, ArmDescriptorRef)>(&self, func: F) {
         let l2_groups = self.root_group.children.lock();
         for l2_group in l2_groups.cursor() {
             let l3_groups = l2_group.children.lock();
             for l3_group in l3_groups.cursor() {
-                let descriptors = l3_group.descriptors.lock();
-                for (i, subgroup) in unsafe { descriptors.as_ref().0.iter().enumerate() } {
+                for i in 0..512 {
                     let vma = l2_group.index << 30 | l3_group.index << 21 | (i << 12);
+                    let descriptor = ArmDescriptorRef {
+                        group: l3_group,
+                        index: i,
+                    };
 
+                    if !descriptor.valid() {
+                        continue;
+                    }
+
+                    func(vma, descriptor);
                 }
-
             }
-
         }
     }
 
@@ -692,3 +697,73 @@ impl ArmDescriptorHandle {
     }
 }
 
+pub struct ArmDescriptorRef<'a> {
+    group: &'a ArmDescriptorGroupManager,
+    index: usize,
+}
+
+impl<'a> ArmDescriptorRef<'a> {
+    pub fn new(group: &'a ArmDescriptorGroupManager, index: usize) -> Self {
+        Self { group, index }
+    }
+
+    pub fn map_phys_addr(&self, phys_addr: usize) {
+        self.group.map_phys_addr(self.index, phys_addr);
+    }
+
+    pub fn map_page(&self, pfn: Pfn) {
+        self.group.map_phys_addr(self.index, pfn.number() << 12);
+    }
+
+    pub fn get_page(&self) -> Option<Pfn> {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        if group[self.index].valid() {
+            Some(Pfn::from_phys_addr(PhysAddr::from_raw_addr(
+                group[self.index].get_phys_address(),
+            )))
+        } else {
+            None
+        }
+    }
+
+    pub fn is_lowest_layer(&self) -> bool {
+        self.group.is_lowest_layer()
+    }
+
+    pub fn af(&self) -> bool {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        group[self.index].af()
+    }
+
+    pub fn set_af(&mut self, af: bool) {
+        let index = self.index;
+        let mut locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_mut() };
+
+        // No break-before-make needed
+        group[index].set_af(af);
+    }
+
+    pub fn valid(&self) -> bool {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        group[self.index].valid()
+    }
+
+    pub fn set_valid(&mut self, valid: bool) {
+        let index = self.index;
+        let mut locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_mut() };
+
+        group[index].break_before_make(|mut descriptor| {
+            descriptor.set_valid(valid);
+
+            descriptor
+        });
+    }
+}

@@ -5,11 +5,14 @@ use crate::{
     elf::{ElfParser, ElfSource, Segment},
     impl_link,
     interrupts::ExceptionRegisters,
-    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, page_from_pfn},
+    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, copy_pfn, page_from_pfn},
+    printk,
     sched::{
         Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, cpu_current_task, restore_regs_and_eret,
     },
-    subsystem::{AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, VmaAllocatedArea},
+    subsystem::{
+        AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, PageFaultType, VmaAllocatedArea,
+    },
     utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
@@ -95,12 +98,56 @@ impl UserSpaceHeap {
     const DEFAULT_BASE_VMA: usize = 0x800_0000;
 
     pub fn new(base_vma: usize) -> Self {
-        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, 0));
+        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, 4));
         let anon_vma = Arc::new(AnonPageMeta::new(None));
 
         anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
 
         Self { vma_area, anon_vma }
+    }
+
+    pub fn fork(&self, parent_table: &ArmPageTableRoot, child_table: &ArmPageTableRoot) -> Self {
+        let base_vma = self.vma_area.vma();
+        let pfn_count = self.vma_area.pfn_count();
+        let end_vma = base_vma + pfn_count * PAGE_SIZE;
+
+        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, pfn_count));
+        let anon_vma = Arc::new(AnonPageMeta::new(Some(self.anon_vma.clone())));
+
+        anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
+
+        parent_table.for_each_valid_page(|page_vma, page| {
+            if base_vma <= page_vma && page_vma < end_vma {
+                // Unwrap is safe because the page has to be valid.
+                let parent_pfn = page.get_page().unwrap();
+
+                let child_pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
+                let child_page = page_from_pfn(child_pfn);
+                child_page.inc_refcount();
+                child_page.spin_lock().set_anon(anon_vma.clone());
+
+                copy_pfn(child_pfn, parent_pfn);
+
+                child_table.map_page_range(page_vma, child_pfn.phys_addr(), 1);
+            }
+        });
+
+        Self { vma_area, anon_vma }
+    }
+
+    fn release_pages(&self, table: &ArmPageTableRoot) {
+        let base_vma = self.vma_area.vma();
+        let pfn_count = self.vma_area.pfn_count();
+        let end_vma = base_vma + pfn_count * PAGE_SIZE;
+
+        table.for_each_valid_page(|page_vma, page| {
+            if base_vma <= page_vma && page_vma < end_vma {
+                // Unwrap is safe because the page has to be valid.
+                let pfn = page.get_page().unwrap();
+
+                page_from_pfn(pfn).dec_refcount();
+            }
+        });
     }
 
     fn contains_vma(&self, vma: usize) -> bool {
@@ -119,8 +166,10 @@ impl UserSpaceHeap {
         let byte_offset = fault_vma - self.vma_area.vma();
         let page_offset = byte_offset / PAGE_SIZE;
         if page_offset >= self.vma_area.pfn_count() {
+            printk!("Out of range page\n");
             return Err(PageFaultError::Unhandled);
         }
+        printk!("Mapping vma {:x}\n", fault_vma);
 
         let pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
 
@@ -140,10 +189,16 @@ impl UserSpaceHeap {
 pub struct UserSpaceProcess {
     pub(crate) page_table: SpinLock<ArmPageTableRoot>,
     pub(crate) user_stack: SpinLock<KBox<UserTaskStack>>,
-    pub(crate) user_heap: KBox<UserSpaceHeap>,
+    pub(crate) user_heap: SpinLock<KBox<UserSpaceHeap>>,
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
     pub(crate) segments: SpinLock<KVec<Segment>>,
     pub(crate) fds: TaskFdTable,
+}
+
+impl Drop for UserSpaceProcess {
+    fn drop(&mut self) {
+        self.user_heap.lock().release_pages(&self.page_table.lock());
+    }
 }
 
 impl UserSpaceProcess {
@@ -159,6 +214,10 @@ impl UserSpaceProcess {
         let new_segments = self.segments.lock().clone();
 
         let new_user_stack = UserTaskStack::clone_box(&self.user_stack.lock());
+        let new_user_heap = self
+            .user_heap
+            .lock()
+            .fork(&self.page_table.lock(), &new_page_table);
         let new_kernel_stack = KernelTaskStack::clone_box(&self.kernel_stack);
         let new_fds = self.fds.fork();
 
@@ -181,7 +240,7 @@ impl UserSpaceProcess {
         UserSpaceProcess {
             page_table: SpinLock::new(new_page_table),
             user_stack: SpinLock::new(new_user_stack),
-            user_heap: kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA)),
+            user_heap: SpinLock::new(kbox(new_user_heap)),
             kernel_stack: new_kernel_stack,
             segments: SpinLock::new(new_segments),
             fds: new_fds,
@@ -266,9 +325,15 @@ impl Process {
             user_stack.len().div_ceil(4096),
         );
 
+        user_process
+            .user_heap
+            .lock()
+            .release_pages(&user_process.page_table.lock());
+
         *user_process.page_table.lock() = page_table;
         *user_process.segments.lock() = segments;
         *user_process.user_stack.lock() = user_stack;
+        *user_process.user_heap.lock() = kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA));
     }
 
     pub fn new_kernel(stack: KBox<KernelTaskStack>) -> Self {
@@ -483,7 +548,7 @@ impl Task {
             page_table: SpinLock::new(page_table),
             segments: SpinLock::new(segments),
             user_stack: SpinLock::new(user_stack),
-            user_heap: kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA)),
+            user_heap: SpinLock::new(kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA))),
             kernel_stack: create_kernel_stack(),
             fds: TaskFdTable::new(),
         };
@@ -583,6 +648,23 @@ impl Task {
             child.kill_children();
             cursor.remove();
         }
+    }
+
+    pub fn handle_page_fault(
+        &self,
+        fault_type: PageFaultType,
+        fault_vma: usize,
+    ) -> Result<(), PageFaultError> {
+        printk!("Running task page fault handler\n");
+        if let Process::User(ref user_process) = *self.process {
+            let heap = user_process.user_heap.lock();
+
+            if fault_type == PageFaultType::Translation {
+                return heap.page_fault(fault_vma);
+            }
+        }
+
+        Err(PageFaultError::Unhandled)
     }
 }
 

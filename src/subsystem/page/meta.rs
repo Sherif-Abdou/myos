@@ -8,7 +8,8 @@ use core::{
 use crate::{
     impl_rblink,
     interrupts::daifset,
-    utils::{Arc, ListArc, RbLinks, RbTree, SpinLock, TreeArc},
+    memory::{PAGE_ALLOCATOR, pfn_from_page},
+    utils::{Arc, RbLinks, RbTree, SpinLock, TreeArc},
 };
 
 // Page types: 3 bits
@@ -33,7 +34,7 @@ impl PageFlags {
 
     /// Marks this page as a head page
     fn set_head(&self) {
-        self.0.fetch_and(!Self::HEAD, SeqCst);
+        self.0.fetch_or(Self::HEAD, SeqCst);
     }
 
     /// Unmarks this page as a head page
@@ -300,6 +301,9 @@ impl PageMeta {
             }
             // Mark page as unused.
             handle.flags.set_page_type(0);
+
+            // Free page from allocator
+            PAGE_ALLOCATOR.lock().mark_free(pfn_from_page(self), 1);
         }
     }
 }

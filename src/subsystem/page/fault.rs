@@ -3,6 +3,7 @@ pub enum PageFaultError {
     Unhandled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageFaultType {
     // No valid translation
     Translation,

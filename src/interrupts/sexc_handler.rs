@@ -5,6 +5,7 @@ use crate::{
     interrupts::{ExceptionRegisters, RETURN_TABLE, syscalls::dispatch_syscall},
     per_cpu_lock, printk, read_sysreg,
     sched::SCHEDULER,
+    subsystem::{PageFaultError, PageFaultType},
     utils::{PerCpuLock, with_core_critical_section},
     write_sysreg,
 };
@@ -44,6 +45,7 @@ const fn create_sexc_table() -> SexcTable {
     let mut base_table = SexcTable([const { default_sexc_handler }; 64]);
 
     base_table.0[0x15] = dispatch_syscall;
+    base_table.0[0x24] = user_data_fault_handler;
 
     base_table
 }
@@ -178,16 +180,66 @@ pub fn user_strlen(src: *const u8) -> usize {
     })
 }
 
+fn handle_data_access_fault(
+    regs: *mut ExceptionRegisters,
+) -> Result<*const ExceptionRegisters, PageFaultError> {
+    let esr: u64;
+    unsafe {
+        read_sysreg!(esr, ESR_EL1);
+    }
+
+    let far: u64;
+    unsafe {
+        read_sysreg!(far, FAR_EL1);
+    }
+
+    let iss = esr & 0x1ffffff;
+
+    let dfsc = iss & 0x3f;
+
+    // Translation fault.
+    let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
+    if (4..8).contains(&dfsc)
+        && interrupted_user
+        && let Some(task) = SCHEDULER.get().unwrap().local_task()
+        && task.is_user_task()
+    {
+        if task
+            .handle_page_fault(PageFaultType::Translation, far as usize)
+            .is_ok()
+        {
+            Ok(regs)
+        } else {
+            Err(PageFaultError::Unhandled)
+        }
+    } else {
+        Err(PageFaultError::Unhandled)
+    }
+}
+
+fn user_data_fault_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    if let Ok(regs) = handle_data_access_fault(regs) {
+        regs
+    } else {
+        default_sexc_handler(regs)
+    }
+}
+
 fn user_data_access_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    if let Ok(handled) = handle_data_access_fault(regs) {
+        return handled;
+    }
+
     let esr: u64;
     unsafe {
         read_sysreg!(esr, ESR_EL1);
     }
 
     let iss = esr & 0x1ffffff;
+    let dfsc = iss & 0x3f;
 
     // Translation fault.
-    if (4..8).contains(&iss) {
+    if (4..8).contains(&dfsc) {
         // We don't swap to disk yet, so cancel the copy
         unsafe { (*regs).gprs[0] = 0x1 }
         unsafe { (*regs).elr += 0x4 }
