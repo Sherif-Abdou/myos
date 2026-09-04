@@ -1,10 +1,8 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    allocators::KERNEL_ALLOCATOR,
     cpu_local,
     interrupts::{ExceptionRegisters, daifclr, daifset},
-    printk,
     sched::Task,
     timer::ms_sleep,
     utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},

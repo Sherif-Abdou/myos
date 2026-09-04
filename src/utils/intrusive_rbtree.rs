@@ -41,6 +41,9 @@ pub struct RbLinks {
     phantom_pin: PhantomPinned,
 }
 
+unsafe impl Send for RbLinks {}
+unsafe impl Sync for RbLinks {}
+
 impl RbLinks {
     pub const fn new() -> Self {
         Self {
@@ -393,6 +396,8 @@ pub struct RbTree<T: RbNode<T, N>, const N: usize = 0> {
     root: Option<NonNull<RbLinks>>,
     _phantom: PhantomData<T>,
 }
+
+unsafe impl<T: RbNode<T, N>, const N: usize> Send for RbTree<T, N> {}
 
 impl<T: RbNode<T, N>, const N: usize> Drop for RbTree<T, N> {
     fn drop(&mut self) {

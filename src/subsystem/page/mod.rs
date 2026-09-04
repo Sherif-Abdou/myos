@@ -418,6 +418,23 @@ impl ArmPageTableRoot {
         }
     }
 
+    // TODO: Finish
+    pub fn for_each_valid_page<F: Fn(usize, &ArmPageDescriptor)>(&self, func: F) {
+        let l2_groups = self.root_group.children.lock();
+        for l2_group in l2_groups.cursor() {
+            let l3_groups = l2_group.children.lock();
+            for l3_group in l3_groups.cursor() {
+                let descriptors = l3_group.descriptors.lock();
+                for (i, subgroup) in unsafe { descriptors.as_ref().0.iter().enumerate() } {
+                    let vma = l2_group.index << 30 | l3_group.index << 21 | (i << 12);
+
+                }
+
+            }
+
+        }
+    }
+
     /// Binds this page table as the kernel page table. This should really only be called once.
     pub fn bind_kernel(&self) {
         with_core_critical_section(|| {
@@ -674,3 +691,4 @@ impl ArmDescriptorHandle {
         });
     }
 }
+

@@ -1,9 +1,16 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kvec}, elf::{ElfParser, ElfSource, Segment}, impl_link, interrupts::ExceptionRegisters, memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, page_from_pfn}, sched::{
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
+    elf::{ElfParser, ElfSource, Segment},
+    impl_link,
+    interrupts::ExceptionRegisters,
+    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, page_from_pfn},
+    sched::{
         Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, cpu_current_task, restore_regs_and_eret,
-    }, subsystem::{AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, VmaAllocatedArea}, utils::{
+    },
+    subsystem::{AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, VmaAllocatedArea},
+    utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
     },
@@ -79,13 +86,14 @@ impl UserTaskStack {
     }
 }
 
-struct UserSpaceHeap {
+pub struct UserSpaceHeap {
     vma_area: Arc<VmaAllocatedArea>,
     anon_vma: Arc<AnonPageMeta>,
 }
 
-
 impl UserSpaceHeap {
+    const DEFAULT_BASE_VMA: usize = 0x800_0000;
+
     pub fn new(base_vma: usize) -> Self {
         let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, 0));
         let anon_vma = Arc::new(AnonPageMeta::new(None));
@@ -132,6 +140,7 @@ impl UserSpaceHeap {
 pub struct UserSpaceProcess {
     pub(crate) page_table: SpinLock<ArmPageTableRoot>,
     pub(crate) user_stack: SpinLock<KBox<UserTaskStack>>,
+    pub(crate) user_heap: KBox<UserSpaceHeap>,
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
     pub(crate) segments: SpinLock<KVec<Segment>>,
     pub(crate) fds: TaskFdTable,
@@ -172,6 +181,7 @@ impl UserSpaceProcess {
         UserSpaceProcess {
             page_table: SpinLock::new(new_page_table),
             user_stack: SpinLock::new(new_user_stack),
+            user_heap: kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA)),
             kernel_stack: new_kernel_stack,
             segments: SpinLock::new(new_segments),
             fds: new_fds,
@@ -473,6 +483,7 @@ impl Task {
             page_table: SpinLock::new(page_table),
             segments: SpinLock::new(segments),
             user_stack: SpinLock::new(user_stack),
+            user_heap: kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA)),
             kernel_stack: create_kernel_stack(),
             fds: TaskFdTable::new(),
         };
