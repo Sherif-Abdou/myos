@@ -29,4 +29,6 @@ int ns_sleep(long long delay_ns);
 
 int ms_sleep(long long delay_ms);
 
+void *sbrk(long long offset);
+
 void exit(int code);

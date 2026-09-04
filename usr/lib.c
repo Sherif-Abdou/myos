@@ -73,7 +73,15 @@ int ns_sleep(long long delay_ns) {
     return 0;
 }
 
-int ms_sleep(long long delay_ms) { ns_sleep(delay_ms * 1000000); }
+void *sbrk(long long offset) {
+    return (void*)syscall(33, (uintptr_t)offset, 0, 0, 0, 0, 0, 0, 0);
+
+}
+
+int ms_sleep(long long delay_ms) { 
+    ns_sleep(delay_ms * 1000000); 
+    return 0;
+}
 
 void exit(int code) {
     syscall(50, code, 0, 0, 0, 0, 0, 0, 0);
@@ -83,8 +91,7 @@ void exit(int code) {
 __attribute__((weak)) int main(int argc, const char **argv);
 
 int _start() {
-    int argc;
-    const char **argv;
+    int argc; const char **argv;
     __asm__ volatile (
         "mov %0, x0\n"
         "mov %1, x1\n"

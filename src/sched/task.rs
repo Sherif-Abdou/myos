@@ -5,7 +5,7 @@ use crate::{
     elf::{ElfParser, ElfSource, Segment},
     impl_link,
     interrupts::ExceptionRegisters,
-    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, copy_pfn, page_from_pfn},
+    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, copy_pfn, page_from_pfn, pfn_from_page},
     printk,
     sched::{
         Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, cpu_current_task, restore_regs_and_eret,
@@ -92,18 +92,45 @@ impl UserTaskStack {
 pub struct UserSpaceHeap {
     vma_area: Arc<VmaAllocatedArea>,
     anon_vma: Arc<AnonPageMeta>,
+    end_address: usize,
 }
 
 impl UserSpaceHeap {
     const DEFAULT_BASE_VMA: usize = 0x800_0000;
 
     pub fn new(base_vma: usize) -> Self {
-        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, 4));
+        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, 0));
         let anon_vma = Arc::new(AnonPageMeta::new(None));
 
         anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
 
-        Self { vma_area, anon_vma }
+        Self {
+            vma_area,
+            anon_vma,
+            end_address: base_vma,
+        }
+    }
+
+    pub fn modify_end(&mut self, offset: isize, table: &ArmPageTableRoot) -> usize {
+        let new_end_address = self.end_address.saturating_add_signed(offset);
+
+        let end_page_before = (self.end_address / PAGE_SIZE) as isize;
+        let end_page_after = (new_end_address.div_ceil(PAGE_SIZE)) as isize;
+        let page_diff = end_page_after - end_page_before;
+        self.modify_pfn_offset(page_diff);
+
+        if new_end_address < self.end_address {
+            table.for_each_valid_page(|vma, page| {
+                if new_end_address <= vma && vma < self.end_address {
+                    let page_meta = page_from_pfn(page.get_page().unwrap());
+                    page_meta.dec_refcount();
+                }
+            });
+        }
+
+        self.end_address = new_end_address;
+
+        new_end_address
     }
 
     pub fn fork(&self, parent_table: &ArmPageTableRoot, child_table: &ArmPageTableRoot) -> Self {
@@ -132,7 +159,11 @@ impl UserSpaceHeap {
             }
         });
 
-        Self { vma_area, anon_vma }
+        Self {
+            vma_area,
+            anon_vma,
+            end_address: self.end_address,
+        }
     }
 
     fn release_pages(&self, table: &ArmPageTableRoot) {
@@ -160,6 +191,7 @@ impl UserSpaceHeap {
 
     pub fn modify_pfn_offset(&self, offset: isize) -> usize {
         self.vma_area.modify_pfn_count(offset)
+        // TODO: Free pages if heap decreases.
     }
 
     fn page_fault(&self, fault_vma: usize) -> Result<(), PageFaultError> {
@@ -655,7 +687,6 @@ impl Task {
         fault_type: PageFaultType,
         fault_vma: usize,
     ) -> Result<(), PageFaultError> {
-        printk!("Running task page fault handler\n");
         if let Process::User(ref user_process) = *self.process {
             let heap = user_process.user_heap.lock();
 
@@ -665,6 +696,17 @@ impl Task {
         }
 
         Err(PageFaultError::Unhandled)
+    }
+
+    pub fn offset_heap(&self, offset: isize) -> Result<usize, ()> {
+        if let Process::User(ref user_process) = *self.process {
+            let mut heap = user_process.user_heap.lock();
+            let page_table = user_process.page_table.lock();
+
+            return Ok(heap.modify_end(offset, &page_table));
+        }
+
+        Ok(0)
     }
 }
 

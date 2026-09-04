@@ -289,6 +289,24 @@ pub fn fork(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn sbrk(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    let offset = unsafe { (*regs).gprs[0] as isize };
+
+    if let Ok(ret) = task.offset_heap(offset) {
+        unsafe {
+            (*regs).gprs[0] = ret as u64;
+        }
+    } else {
+        unsafe {
+            (*regs).gprs[0] = (-1i64) as u64;
+        }
+    }
+
+    regs
+}
+
 const fn build_syscall_table() -> [Syscall; 100] {
     let mut table = [const { Syscall::empty() }; 100];
 
@@ -300,6 +318,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[20] = Syscall::new(fork);
     table[22] = Syscall::new(exec);
     table[27] = Syscall::new(waitpid);
+    table[33] = Syscall::new(sbrk);
     table[50] = Syscall::new(exit);
 
     table

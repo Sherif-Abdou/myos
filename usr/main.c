@@ -57,6 +57,8 @@ int main(int argc, const char **argv) {
         }
         waitpid(child);
 
+        void *ptr = sbrk(0);
+
         puts("This is the parent after the child is done.\n");
     } else {
         const char *buf[2];
