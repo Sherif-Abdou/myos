@@ -1,19 +1,13 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
-    elf::{ElfParser, ElfSource, Segment},
-    impl_link,
-    interrupts::ExceptionRegisters,
-    memory::{PAGE_ALLOCATOR, PAGE_SIZE, Pfn, copy_pfn, page_from_pfn, pfn_from_page},
-    printk,
-    sched::{
-        Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, cpu_current_task, restore_regs_and_eret,
-    },
-    subsystem::{
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec}, elf::{ElfParser, ElfSource, Segment}, impl_link, interrupts::ExceptionRegisters, memory::{PAGE_SIZE, Pfn}, printk, sched::{
+        Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
+        lazy_buffer::{LazyPageBuffer, LazyPageUninitSource},
+        restore_regs_and_eret,
+    }, subsystem::{
         AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, PageFaultType, VmaAllocatedArea,
-    },
-    utils::{
+    }, utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
     },
@@ -89,11 +83,7 @@ impl UserTaskStack {
     }
 }
 
-pub struct UserSpaceHeap {
-    vma_area: Arc<VmaAllocatedArea>,
-    anon_vma: Arc<AnonPageMeta>,
-    end_address: usize,
-}
+pub struct UserSpaceHeap(LazyPageBuffer<LazyPageUninitSource>);
 
 impl UserSpaceHeap {
     const DEFAULT_BASE_VMA: usize = 0x800_0000;
@@ -104,117 +94,41 @@ impl UserSpaceHeap {
 
         anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
 
-        Self {
-            vma_area,
-            anon_vma,
-            end_address: base_vma,
-        }
+        Self(LazyPageBuffer::new_uninit(base_vma, base_vma))
     }
 
     pub fn modify_end(&mut self, offset: isize, table: &ArmPageTableRoot) -> usize {
-        let new_end_address = self.end_address.saturating_add_signed(offset);
+        let original_end_address = self.0.end_address();
+        let new_end_address = original_end_address.saturating_add_signed(offset);
 
-        let end_page_before = (self.end_address / PAGE_SIZE) as isize;
-        let end_page_after = (new_end_address.div_ceil(PAGE_SIZE)) as isize;
-        let page_diff = end_page_after - end_page_before;
-        self.modify_pfn_offset(page_diff);
-
-        if new_end_address < self.end_address {
-            table.for_each_valid_page(|vma, page| {
-                if new_end_address <= vma && vma < self.end_address {
-                    let page_meta = page_from_pfn(page.get_page().unwrap());
-                    page_meta.dec_refcount();
-                }
-            });
-        }
-
-        self.end_address = new_end_address;
+        self.0.set_end_bound(new_end_address, table);
 
         new_end_address
     }
 
     pub fn fork(&self, parent_table: &ArmPageTableRoot, child_table: &ArmPageTableRoot) -> Self {
-        let base_vma = self.vma_area.vma();
-        let pfn_count = self.vma_area.pfn_count();
-        let end_vma = base_vma + pfn_count * PAGE_SIZE;
-
-        let vma_area = Arc::new(VmaAllocatedArea::new(base_vma, pfn_count));
-        let anon_vma = Arc::new(AnonPageMeta::new(Some(self.anon_vma.clone())));
-
-        anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
-
-        parent_table.for_each_valid_page(|page_vma, page| {
-            if base_vma <= page_vma && page_vma < end_vma {
-                // Unwrap is safe because the page has to be valid.
-                let parent_pfn = page.get_page().unwrap();
-
-                let child_pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
-                let child_page = page_from_pfn(child_pfn);
-                child_page.inc_refcount();
-                child_page.spin_lock().set_anon(anon_vma.clone());
-
-                copy_pfn(child_pfn, parent_pfn);
-
-                child_table.map_page_range(page_vma, child_pfn.phys_addr(), 1);
-            }
-        });
-
-        Self {
-            vma_area,
-            anon_vma,
-            end_address: self.end_address,
-        }
+        Self(self.0.fork(parent_table, child_table))
     }
 
     fn release_pages(&self, table: &ArmPageTableRoot) {
-        let base_vma = self.vma_area.vma();
-        let pfn_count = self.vma_area.pfn_count();
-        let end_vma = base_vma + pfn_count * PAGE_SIZE;
-
-        table.for_each_valid_page(|page_vma, page| {
-            if base_vma <= page_vma && page_vma < end_vma {
-                // Unwrap is safe because the page has to be valid.
-                let pfn = page.get_page().unwrap();
-
-                page_from_pfn(pfn).dec_refcount();
-            }
-        });
+        self.0.release_pages(table);
     }
 
     fn contains_vma(&self, vma: usize) -> bool {
-        self.vma_area.vma() <= vma && vma < self.end_of_heap()
+        self.0.contains_vma(vma)
     }
 
     fn end_of_heap(&self) -> usize {
-        self.vma_area.vma() + self.vma_area.pfn_count() * PAGE_SIZE
+        self.0.end_address()
     }
 
-    pub fn modify_pfn_offset(&self, offset: isize) -> usize {
-        self.vma_area.modify_pfn_count(offset)
-        // TODO: Free pages if heap decreases.
-    }
-
-    fn page_fault(&self, fault_vma: usize) -> Result<(), PageFaultError> {
-        let byte_offset = fault_vma - self.vma_area.vma();
-        let page_offset = byte_offset / PAGE_SIZE;
-        if page_offset >= self.vma_area.pfn_count() {
-            printk!("Out of range page\n");
-            return Err(PageFaultError::Unhandled);
-        }
-        printk!("Mapping vma {:x}\n", fault_vma);
-
-        let pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
-
-        let page = page_from_pfn(pfn);
-        page.inc_refcount();
-        page.spin_lock().set_anon(self.anon_vma.clone());
-
-        let task = cpu_current_task().unwrap();
-
-        task.process
-            .map_page_range(fault_vma & !(PAGE_SIZE - 1), pfn, 1);
-
-        Ok(())
+    fn page_fault(
+        &self,
+        fault: PageFaultType,
+        vma: usize,
+        table: &SpinLock<ArmPageTableRoot>,
+    ) -> Result<(), PageFaultError> {
+        self.0.page_fault(fault, vma, table)
     }
 }
 
@@ -223,7 +137,7 @@ pub struct UserSpaceProcess {
     pub(crate) user_stack: SpinLock<KBox<UserTaskStack>>,
     pub(crate) user_heap: SpinLock<KBox<UserSpaceHeap>>,
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
-    pub(crate) segments: SpinLock<KVec<Segment>>,
+    pub(crate) segments: SpinLock<KVec<LazyPageBuffer<Segment>>>,
     pub(crate) fds: TaskFdTable,
 }
 
@@ -243,7 +157,7 @@ impl UserSpaceProcess {
     fn fork(&self) -> UserSpaceProcess {
         let new_page_table = ArmPageTableRoot::create_user();
 
-        let new_segments = self.segments.lock().clone();
+        let mut new_segments = kvec();
 
         let new_user_stack = UserTaskStack::clone_box(&self.user_stack.lock());
         let new_user_heap = self
@@ -253,15 +167,11 @@ impl UserSpaceProcess {
         let new_kernel_stack = KernelTaskStack::clone_box(&self.kernel_stack);
         let new_fds = self.fds.fork();
 
-        for segment in new_segments.iter() {
-            if !segment.is_null() {
-                let phys_addr = segment.loaded_phys_addr();
-                let virt_addr = segment.virt_addr() & !0xfff;
-                let pages = segment.mem_page_count();
-
-                new_page_table.map_page_range(virt_addr, phys_addr, pages);
-            }
+        let parent_page_table = self.page_table.lock();
+        for segment in self.segments.lock().iter() {
+            new_segments.push(segment.fork(&parent_page_table, &new_page_table));
         }
+        drop(parent_page_table);
 
         new_page_table.map_page_range(
             STACK_VIRTUAL_ADDR,
@@ -299,7 +209,7 @@ pub enum Process {
 }
 
 impl Process {
-    fn map_page_range(&self, vma: usize, pfn: Pfn, count: usize) {
+    pub(crate) fn map_page_range(&self, vma: usize, pfn: Pfn, count: usize) {
         match self {
             Process::Kernel(_) => todo!(),
             Process::User(user_space_process) => {
@@ -308,7 +218,7 @@ impl Process {
         }
     }
 
-    pub fn exec<S: ElfSource>(&self, parser: &ElfParser<S>, args: &[u8]) {
+    pub fn exec(&self, parser: &ElfParser, args: &[u8]) {
         let Process::User(user_process) = self else {
             return;
         };
@@ -341,13 +251,14 @@ impl Process {
         for index in 0..num_segments {
             let segment = parser.segment(index);
             if !segment.is_null() {
-                let phys_addr = segment.loaded_phys_addr();
                 let virt_addr = segment.virt_addr() & !0xfff;
                 let pages = segment.mem_page_count();
 
-                page_table.map_page_range(virt_addr, phys_addr, pages);
-
-                segments.push(segment);
+                segments.push(LazyPageBuffer::new(
+                    segment,
+                    virt_addr,
+                    virt_addr + pages * PAGE_SIZE,
+                ));
             }
         }
 
@@ -491,7 +402,7 @@ impl Task {
         pid
     }
 
-    pub fn exec(&self, elf: impl ElfSource, args: &[u8]) -> ExceptionRegisters {
+    pub fn exec(&self, elf: Arc<dyn ElfSource + Send + Sync>, args: &[u8]) -> ExceptionRegisters {
         assert!(args.len() < STACK_SIZE);
 
         let parser = ElfParser::new(elf);
@@ -547,7 +458,7 @@ impl Task {
         task
     }
 
-    pub fn load_program(elf: impl ElfSource) -> UniqueArc<Task> {
+    pub fn load_program(elf: Arc<dyn ElfSource + Send + Sync>) -> UniqueArc<Task> {
         let parser = ElfParser::new(elf);
 
         let num_segments = parser.num_segments();
@@ -560,13 +471,14 @@ impl Task {
         for index in 0..num_segments {
             let segment = parser.segment(index);
             if !segment.is_null() {
-                let phys_addr = segment.loaded_phys_addr();
                 let virt_addr = segment.virt_addr() & !0xfff;
                 let pages = segment.mem_page_count();
 
-                page_table.map_page_range(virt_addr, phys_addr, pages);
-
-                segments.push(segment);
+                segments.push(LazyPageBuffer::new(
+                    segment,
+                    virt_addr,
+                    virt_addr + pages * PAGE_SIZE,
+                ));
             }
         }
 
@@ -685,15 +597,22 @@ impl Task {
     pub fn handle_page_fault(
         &self,
         fault_type: PageFaultType,
-        fault_vma: usize,
+        vma: usize,
     ) -> Result<(), PageFaultError> {
         if let Process::User(ref user_process) = *self.process {
             let heap = user_process.user_heap.lock();
 
-            if fault_type == PageFaultType::Translation {
-                return heap.page_fault(fault_vma);
+            if heap.contains_vma(vma) {
+                return heap.page_fault(fault_type, vma, &user_process.page_table);
+            }
+            drop(heap);
+            for segment in user_process.segments.lock().iter() {
+                if segment.contains_vma(vma) {
+                    return segment.page_fault(fault_type, vma, &user_process.page_table);
+                }
             }
         }
+
 
         Err(PageFaultError::Unhandled)
     }
@@ -774,7 +693,7 @@ impl TaskFdTable {
 
     pub fn fork(&self) -> TaskFdTable {
         let list = self.fds.lock();
-        let next_fd_number = AtomicUsize::new(0);
+        let next_fd_number = AtomicUsize::new(11);
 
         let mut new_fds = kvec();
         for task in list.iter() {
@@ -829,7 +748,7 @@ impl TaskFd {
                 offset,
             } => {
                 let local_offset = offset.load(SeqCst);
-                if let Ok(read) = inode.read(local_offset as u64, buf) {
+                if let Ok(read) = Inode::read(inode, local_offset as u64, buf) {
                     offset.fetch_add(read, SeqCst);
 
                     read as isize

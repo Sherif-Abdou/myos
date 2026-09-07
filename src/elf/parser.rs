@@ -1,12 +1,11 @@
-use core::{alloc::Layout, ptr::NonNull};
-
-use alloc::alloc::Allocator;
-
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, align_up},
+    allocators::KBox,
     elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
+    memory::PAGE_SIZE,
+    printk,
+    sched::LazyPageBufferSource,
     subsystem::Inode,
-    utils::PhysAddr,
+    utils::Arc,
 };
 
 pub trait ElfSource {
@@ -31,127 +30,37 @@ impl<T: ElfSource> ElfSource for &T {
     }
 }
 
-impl ElfSource for &Inode {
+impl<T: ElfSource> ElfSource for Arc<T> {
+    fn read(&self, offset: usize, buf: &mut [u8]) {
+        T::read(self, offset, buf);
+    }
+}
+
+impl ElfSource for Inode {
     fn read(&self, offset: usize, buf: &mut [u8]) {
         // TODO: error handle
         let _ = Inode::read(self, offset as u64, buf);
     }
 }
 
-pub struct ElfParser<S: ElfSource> {
+type ElfSourceArc = Arc<dyn ElfSource + Send + Sync + 'static>;
+
+pub struct ElfParser {
     header: ElfHeader,
-    source: S,
+    source: ElfSourceArc,
 }
 
+#[derive(Clone)]
 pub enum SegmentType {
-    Loaded(NonNull<[u8]>),
-    Zeroed(NonNull<[u8]>),
+    Loaded(Arc<dyn ElfSource + 'static>),
+    Zeroed,
     Null,
 }
 
 unsafe impl Sync for SegmentType {}
 unsafe impl Send for SegmentType {}
 
-impl Clone for SegmentType {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Loaded(original) => {
-                let copy = KERNEL_ALLOCATOR
-                    .allocate_zeroed(Self::layout(original.len()))
-                    .unwrap();
-
-                unsafe {
-                    (*copy.as_ptr()).copy_from_slice(original.as_ptr().as_ref().unwrap());
-                }
-
-                SegmentType::Loaded(copy)
-            }
-            Self::Zeroed(original) => {
-                let copy = KERNEL_ALLOCATOR
-                    .allocate_zeroed(Self::layout(original.len()))
-                    .unwrap();
-
-                unsafe {
-                    (*copy.as_ptr()).copy_from_slice(original.as_ptr().as_ref().unwrap());
-                }
-
-                SegmentType::Zeroed(copy)
-            }
-            Self::Null => Self::Null,
-        }
-    }
-}
-
-impl SegmentType {
-    const fn layout(len: usize) -> Layout {
-        unsafe { Layout::from_size_align_unchecked(len, 4096) }
-    }
-
-    pub fn new_loaded(len: usize) -> Self {
-        let allocated: NonNull<[u8]> = KERNEL_ALLOCATOR.allocate_zeroed(Self::layout(len)).unwrap();
-
-        Self::Loaded(allocated)
-    }
-
-    pub fn load_from_source(header: &ProgramHeader, reader: impl ElfSource) -> Self {
-        let front_padding = header.vaddr % 4096;
-
-        let buffer_len = align_up(front_padding + header.memsz, 4096);
-        let mut allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
-            .allocate_zeroed(Self::layout(buffer_len))
-            .unwrap();
-        let buf = unsafe { allocated.as_mut() };
-
-        reader.read(
-            header.offset,
-            &mut buf[front_padding..(front_padding + header.filesz)],
-        );
-
-        Self::Loaded(allocated)
-    }
-
-    pub fn load_zeroed(header: &ProgramHeader) -> Self {
-        let front_padding = header.vaddr % 4096;
-
-        let buffer_len = align_up(front_padding + header.filesz, 4096);
-        let allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
-            .allocate_zeroed(Self::layout(buffer_len))
-            .unwrap();
-
-        Self::Loaded(allocated)
-    }
-
-    pub fn load_from_zeroed(header: &ProgramHeader, reader: impl ElfSource) -> Self {
-        let front_padding = header.vaddr % 4096;
-
-        let buffer_len = align_up(front_padding + header.filesz, 4096);
-        let mut allocated: NonNull<[u8]> = KERNEL_ALLOCATOR
-            .allocate_zeroed(Self::layout(buffer_len))
-            .unwrap();
-        let buf = unsafe { allocated.as_mut() };
-
-        reader.read(
-            header.offset,
-            &mut buf[front_padding..(front_padding + header.filesz)],
-        );
-
-        Self::Loaded(allocated)
-    }
-}
-
-impl Drop for SegmentType {
-    fn drop(&mut self) {
-        if let Self::Loaded(segment) = self {
-            unsafe {
-                KERNEL_ALLOCATOR.deallocate(segment.cast(), Self::layout(segment.len()));
-            }
-        } else if let Self::Zeroed(segment) = self {
-            unsafe {
-                KERNEL_ALLOCATOR.deallocate(segment.cast(), Self::layout(segment.len()));
-            }
-        }
-    }
-}
+impl SegmentType {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SegmentPermissions(u32);
@@ -180,7 +89,8 @@ impl SegmentPermissions {
 
 #[derive(Clone)]
 pub struct Segment {
-    blob: SegmentType,
+    source: SegmentType,
+    offset: usize,
     vaddr: usize,
     memsz: usize,
     filesz: usize,
@@ -189,7 +99,7 @@ pub struct Segment {
 
 impl Segment {
     pub fn is_null(&self) -> bool {
-        matches!(self.blob, SegmentType::Null)
+        matches!(self.source, SegmentType::Null)
     }
 
     pub fn virt_addr(&self) -> usize {
@@ -200,21 +110,42 @@ impl Segment {
         self.memsz
     }
 
-    pub fn mem_page_count(&self) -> usize {
-        self.mem_size().div_ceil(4096)
+    pub fn offset(&self) -> usize {
+        self.vaddr % PAGE_SIZE
     }
 
-    pub fn loaded_phys_addr(&self) -> PhysAddr {
-        let SegmentType::Loaded(ptr) = self.blob else {
-            todo!("Only support phys addr of loaded segment.")
-        };
-
-        PhysAddr::from(ptr)
+    pub fn mem_page_count(&self) -> usize {
+        (self.offset() + self.mem_size()).div_ceil(4096)
     }
 }
 
-impl<S: ElfSource> ElfParser<S> {
-    pub fn new(source: S) -> Self {
+impl LazyPageBufferSource for Segment {
+    fn read_page(&self, offset: usize, buf: &mut [u8]) {
+        match self.source {
+            SegmentType::Loaded(ref elf_source) => {
+                let front_padding = self.vaddr % PAGE_SIZE;
+
+                let end = self.filesz.saturating_sub(offset).min(PAGE_SIZE);
+                if offset == 0 {
+                    elf_source.read(self.offset + offset, &mut buf[front_padding..end]);
+                } else {
+                    elf_source.read(
+                        self.offset + offset.saturating_sub(front_padding),
+                        &mut buf[..end],
+                    );
+                }
+                buf[end..].fill(0);
+            }
+            SegmentType::Zeroed => {
+                buf.fill(0);
+            }
+            SegmentType::Null => {}
+        }
+    }
+}
+
+impl ElfParser {
+    pub fn new(source: Arc<dyn ElfSource + Send + Sync + 'static>) -> Self {
         let mut buf = [0u8; core::mem::size_of::<ElfHeader>()];
         source.read(0, &mut buf);
         let ptr = buf.as_ptr();
@@ -260,9 +191,9 @@ impl<S: ElfSource> ElfParser<S> {
             let disk_len = header.filesz;
 
             if mem_len == 0 {
-                blob = SegmentType::load_zeroed(&header);
+                blob = SegmentType::Zeroed;
             } else if disk_len <= mem_len {
-                blob = SegmentType::load_from_source(&header, &self.source);
+                blob = SegmentType::Loaded(self.source.clone());
             } else {
                 panic!("Cannot handle segment #{}", index);
             }
@@ -271,7 +202,8 @@ impl<S: ElfSource> ElfParser<S> {
         }
 
         Segment {
-            blob,
+            source: blob,
+            offset: header.offset,
             vaddr: header.vaddr,
             memsz: header.memsz,
             filesz: header.filesz,

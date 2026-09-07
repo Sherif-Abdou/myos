@@ -290,6 +290,7 @@ impl BlockCache {
         }
 
         if self.cache_count.load(SeqCst) > (9 * MAX_CACHE_SIZE) / 10 {
+            drop(sectors);
             self.reclaim(None);
         }
     }

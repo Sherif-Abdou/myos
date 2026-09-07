@@ -207,7 +207,7 @@ impl Sched {
         self.run_queue.lock().push_back(task.into());
     }
 
-    pub fn load_program(&self, elf: &[u8]) {
+    pub fn load_program(&self, elf: Arc<&'static [u8]>) {
         let task = Task::load_program(elf);
 
         self.run_queue.lock().push_back(task.into());

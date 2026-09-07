@@ -1,4 +1,4 @@
-use core::{mem::MaybeUninit, ptr};
+use core::{mem::MaybeUninit, ptr, slice};
 
 use crate::{
     dtb::FdtNode,
@@ -38,6 +38,16 @@ impl Pfn {
     pub const fn as_kernel_ptr(&self) -> *mut u8 {
         ((self.0 * PAGE_SIZE) | 0xffffff80_00000000) as *mut u8
     }
+
+    /// SAFETY: No mutable reference to this page should be in use.
+    pub unsafe fn as_slice(&self) -> &'static [u8] {
+        unsafe { slice::from_raw_parts(self.as_kernel_ptr(), PAGE_SIZE) }
+    }
+
+    /// SAFETY: No mutable reference to this page should be in use.
+    pub unsafe fn as_mut_slice(&self) -> &'static mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.as_kernel_ptr(), PAGE_SIZE) }
+    }
 }
 
 pub fn copy_pfn(dst: Pfn, src: Pfn) {
@@ -64,7 +74,7 @@ impl From<Pfn> for usize {
 pub const PAGE_SHIFT: usize = 12;
 pub const PAGE_SIZE: usize = 1 << PAGE_SHIFT;
 
-const BITMASK_ELEMENT_SIZE: usize = core::mem::size_of::<u64>();
+const BITMASK_ELEMENT_BITS: usize = core::mem::size_of::<u64>() * 8;
 
 pub struct PageAllocator<'a> {
     bitmask: &'a mut [u64],
@@ -81,14 +91,14 @@ impl PageAllocator<'_> {
     const fn bitmask_len_for_memory(size: usize) -> usize {
         let pages = size.div_ceil(PAGE_SIZE);
 
-        pages.div_ceil(BITMASK_ELEMENT_SIZE)
+        pages.div_ceil(BITMASK_ELEMENT_BITS)
     }
 
     pub fn is_free(&self, pfn: Pfn) -> bool {
         let local_pfn: usize = pfn.number() - self.offset;
 
-        let index = local_pfn / BITMASK_ELEMENT_SIZE;
-        let offset = local_pfn % BITMASK_ELEMENT_SIZE;
+        let index = local_pfn / BITMASK_ELEMENT_BITS;
+        let offset = local_pfn % BITMASK_ELEMENT_BITS;
 
         self.bitmask[index] & (1 << offset) == 0
     }
@@ -97,10 +107,10 @@ impl PageAllocator<'_> {
         let local_pfn = pfn.number() - self.offset;
 
         let effective_count =
-            count.min((self.bitmask.len() * BITMASK_ELEMENT_SIZE).saturating_sub(local_pfn));
+            count.min((self.bitmask.len() * BITMASK_ELEMENT_BITS).saturating_sub(local_pfn));
         for page in local_pfn..(local_pfn + effective_count) {
-            let index = page / BITMASK_ELEMENT_SIZE;
-            let offset = page % BITMASK_ELEMENT_SIZE;
+            let index = page / BITMASK_ELEMENT_BITS;
+            let offset = page % BITMASK_ELEMENT_BITS;
 
             self.bitmask[index] |= 1 << offset;
         }
@@ -111,10 +121,10 @@ impl PageAllocator<'_> {
         let local_pfn = pfn.number() - self.offset;
 
         let effective_count =
-            count.min((self.bitmask.len() * BITMASK_ELEMENT_SIZE).saturating_sub(local_pfn));
+            count.min((self.bitmask.len() * BITMASK_ELEMENT_BITS).saturating_sub(local_pfn));
         for page in local_pfn..(local_pfn + effective_count) {
-            let index = page / BITMASK_ELEMENT_SIZE;
-            let offset = page % BITMASK_ELEMENT_SIZE;
+            let index = page / BITMASK_ELEMENT_BITS;
+            let offset = page % BITMASK_ELEMENT_BITS;
 
             self.bitmask[index] &= !(1 << offset);
         }
@@ -126,7 +136,7 @@ impl PageAllocator<'_> {
         let mut region_start = self.offset;
         let mut region_size = 0;
 
-        for page in self.offset..(self.offset + self.bitmask.len() * BITMASK_ELEMENT_SIZE) {
+        for page in self.offset..(self.offset + self.bitmask.len() * BITMASK_ELEMENT_BITS) {
             if self.is_free(page.into()) {
                 region_size += 1;
             } else {
@@ -306,7 +316,7 @@ pub fn init_allocator(memory: &FdtNode) {
 
     let bitmask = unsafe { array_from_ptr(next_page.cast(), bitmask_len) };
     let bitmask_pfn = Pfn::from_ptr(bitmask.as_ptr().cast());
-    let bitmask_page_count = (bitmask.len() * BITMASK_ELEMENT_SIZE) / PAGE_SIZE;
+    let bitmask_page_count = (bitmask.len() * BITMASK_ELEMENT_BITS / 8) / PAGE_SIZE;
 
     let mut allocator = PAGE_ALLOCATOR.lock();
     allocator.bitmask = bitmask;

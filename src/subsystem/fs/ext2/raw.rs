@@ -85,7 +85,7 @@ impl SuperBlock {
     }
 
     pub fn group_count(&self) -> u64 {
-        (self.blocks_count / self.blocks_per_group) as u64
+        (self.blocks_count.div_ceil(self.blocks_per_group)) as u64
     }
 
     pub fn super_block_offset(&self) -> u64 {

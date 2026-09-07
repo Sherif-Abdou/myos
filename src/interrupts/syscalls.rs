@@ -3,15 +3,10 @@ use core::str;
 use alloc::slice;
 
 use crate::{
-    allocators::{KBox, align_up, kbox_with_len},
-    interrupts::{
+    allocators::{KBox, align_up, kbox_with_len}, interrupts::{
         ExceptionRegisters, RETURN_TABLE, daifset,
         sexc_handler::{copy_from_user, copy_to_user, user_strlen},
-    },
-    printk,
-    sched::SCHEDULER,
-    subsystem::{CONSOLE, EXT2_FS, FileSystem},
-    timer::us_sleep,
+    }, printk, sched::SCHEDULER, subsystem::{CONSOLE, EXT2_FS, FileSystem}, timer::us_sleep, utils::Arc,
 };
 
 pub(crate) struct Syscall {
@@ -201,7 +196,7 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         });
 
         let args = parse_argv(argc, (*scratch_argv).as_ptr().addr() as u64);
-        let new_regs = task.exec(&*inode, &args);
+        let new_regs = task.exec(Arc::new(inode), &args);
         task.bind_pages();
 
         unsafe { (*regs) = new_regs };

@@ -45,6 +45,7 @@ const fn create_sexc_table() -> SexcTable {
     let mut base_table = SexcTable([const { default_sexc_handler }; 64]);
 
     base_table.0[0x15] = dispatch_syscall;
+    base_table.0[0x20] = user_instruction_fault_handler;
     base_table.0[0x24] = user_data_fault_handler;
 
     base_table
@@ -195,11 +196,11 @@ fn handle_data_access_fault(
 
     let iss = esr & 0x1ffffff;
 
-    let dfsc = iss & 0x3f;
+    let fsc = iss & 0x3f;
 
     // Translation fault.
     let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
-    if (4..8).contains(&dfsc)
+    if (4..8).contains(&fsc)
         && interrupted_user
         && let Some(task) = SCHEDULER.get().unwrap().local_task()
         && task.is_user_task()
@@ -218,6 +219,14 @@ fn handle_data_access_fault(
 }
 
 fn user_data_fault_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    if let Ok(regs) = handle_data_access_fault(regs) {
+        regs
+    } else {
+        default_sexc_handler(regs)
+    }
+}
+
+fn user_instruction_fault_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     if let Ok(regs) = handle_data_access_fault(regs) {
         regs
     } else {
@@ -286,6 +295,7 @@ fn default_sexc_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegist
         && let Some(task) = SCHEDULER.get().unwrap().local_task()
         && task.is_user_task()
     {
+        printk!("SIGSEV\n");
         abort_thread()
     } else {
         dispatch_kernel_panic(regs, far, elr, esr, ec)
