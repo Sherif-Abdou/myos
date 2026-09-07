@@ -5,6 +5,7 @@
 #include "lib.h"
 
 const char *base = "hello world\n";
+static volatile int a;
 
 void shell(void) {
     char line[64];
@@ -37,8 +38,10 @@ void shell(void) {
 }
 
 int main(int argc, const char **argv) {
+    a = 50;
     int child = fork();
     if (child != 0) {
+        a = 0;
         const char *addr = "hello land\n";
         // write(0, (const char *)0x8, 4);
 
@@ -63,11 +66,20 @@ int main(int argc, const char **argv) {
         void *ptr = sbrk(0);
 
         puts("This is the parent after the child is done.\n");
+
+        if (a != 0) {
+            puts("Copy on write fails in parent\n");
+        }
     } else {
         const char *buf[2];
         buf[0] = "this is an argument\n";
         buf[1] = "so guys, thoughts on markiplier?\n";
-        exec("main", 2, buf);
+        ms_sleep(3000);
+        if (a != 50) {
+            puts("Copy on write fails in child\n");
+        }
+        a = 27;
+        exec("other", 2, buf);
     }
 
     return 0;

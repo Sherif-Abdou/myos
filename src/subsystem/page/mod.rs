@@ -418,6 +418,19 @@ impl ArmPageTableRoot {
         }
     }
 
+    pub fn map_page_range_ro(&self, virtual_addr: usize, phys_addr: PhysAddr, page_count: usize) {
+        assert!(phys_addr.get().is_multiple_of(4096));
+
+        for page in 0..page_count {
+            let virtual_addr = virtual_addr + 4096 * page;
+            let phys_addr = phys_addr.get() + 4096 * page;
+
+            let handle = self.descriptor_for_vma_or_create(virtual_addr);
+
+            handle.map_phys_addr_ro(phys_addr);
+        }
+    }
+
     pub fn for_each_valid_page<F: Fn(usize, ArmDescriptorRef)>(&self, func: F) {
         let l2_groups = self.root_group.children.lock();
         for l2_group in l2_groups.cursor() {
@@ -517,6 +530,23 @@ impl ArmDescriptorGroupManager {
                 before.set_af(true);
                 before.set_page_descriptor(true);
                 before.set_valid(true);
+                before.set_phys_address(phys_addr);
+                before
+            });
+        }
+    }
+
+    pub fn map_phys_addr_ro(&self, index: usize, phys_addr: usize) {
+        assert!(phys_addr.is_multiple_of(4096));
+
+        unsafe {
+            let mut descriptors = self.descriptors.lock();
+            let group = descriptors.as_mut();
+            group[index].break_before_make(|mut before| {
+                before.set_af(true);
+                before.set_page_descriptor(true);
+                before.set_valid(true);
+                before.set_ap2(1);
                 before.set_phys_address(phys_addr);
                 before
             });
@@ -640,6 +670,10 @@ impl ArmDescriptorHandle {
         self.group.map_phys_addr(self.index, phys_addr);
     }
 
+    pub fn map_phys_addr_ro(&self, phys_addr: usize) {
+        self.group.map_phys_addr_ro(self.index, phys_addr);
+    }
+
     pub fn map_page(&self, pfn: Pfn) {
         self.group.map_phys_addr(self.index, pfn.number() << 12);
     }
@@ -730,6 +764,23 @@ impl<'a> ArmDescriptorRef<'a> {
 
     pub fn is_lowest_layer(&self) -> bool {
         self.group.is_lowest_layer()
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        let locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_ref() };
+
+        group[self.index].get_ap2() != 0
+    }
+
+    pub fn set_readonly(&self, ro: bool) {
+        let mut locked = self.group.descriptors.lock();
+        let group = unsafe { locked.as_mut() };
+
+        group[self.index].break_before_make(|mut page| {
+            page.set_ap2(ro as u64);
+            page
+        });
     }
 
     pub fn af(&self) -> bool {

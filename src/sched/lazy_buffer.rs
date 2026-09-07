@@ -80,7 +80,7 @@ impl<S: LazyPageBufferSource + Clone> Clone for LazyPageBuffer<S> {
         Self {
             vma_area: self.vma_area.clone(),
             anon_vma: self.anon_vma.clone(),
-            vma_bounds: SpinLock::new(self.vma_bounds.lock().clone()),
+            vma_bounds: SpinLock::new(*self.vma_bounds.lock()),
             source: self.source.clone(),
         }
     }
@@ -99,17 +99,21 @@ impl<S: LazyPageBufferSource + Clone> LazyPageBuffer<S> {
 
         parent_table.for_each_valid_page(|page_vma, page| {
             if base_vma <= page_vma && page_vma < end_vma {
+                page.set_readonly(true);
+
                 // Unwrap is safe because the page has to be valid.
                 let parent_pfn = page.get_page().unwrap();
+                let parent_page = page_from_pfn(parent_pfn);
+                parent_page.inc_refcount();
 
-                let child_pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
-                let child_page = page_from_pfn(child_pfn);
-                child_page.inc_refcount();
-                child_page.spin_lock().set_anon(anon_vma.clone());
+                // let child_pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
+                // let child_page = page_from_pfn(child_pfn);
+                // child_page.inc_refcount();
+                // child_page.spin_lock().set_anon(anon_vma.clone());
+                //
+                // copy_pfn(child_pfn, parent_pfn);
 
-                copy_pfn(child_pfn, parent_pfn);
-
-                child_table.map_page_range(page_vma, child_pfn.phys_addr(), 1);
+                child_table.map_page_range_ro(page_vma, parent_pfn.phys_addr(), 1);
             }
         });
 
@@ -210,7 +214,6 @@ impl<S: LazyPageBufferSource> LazyPageBuffer<S> {
             }
             PageFaultType::Access => Err(PageFaultError::Unhandled),
             PageFaultType::Permission => {
-                // TODO: COW
                 let table = table.lock();
                 let byte_offset = vma - self.vma_area.vma();
                 let page_offset = byte_offset / PAGE_SIZE;
@@ -219,7 +222,30 @@ impl<S: LazyPageBufferSource> LazyPageBuffer<S> {
                     return Err(PageFaultError::Unhandled);
                 }
 
-                Err(PageFaultError::Unhandled)
+                let page_start_vma = vma & !(PAGE_SIZE - 1);
+
+                table.for_each_valid_page(|vma, descriptor| {
+                    if vma == page_start_vma {
+                        let current_pfn = descriptor.get_page().unwrap();
+                        let new_pfn = PAGE_ALLOCATOR.lock().reserve_pages(1).unwrap();
+
+                        let new_page = page_from_pfn(new_pfn);
+                        new_page.inc_refcount();
+                        new_page.spin_lock().set_anon(self.anon_vma.clone());
+
+                        let current_page = page_from_pfn(current_pfn);
+
+                        unsafe { new_pfn.as_mut_slice() }
+                            .copy_from_slice(unsafe { current_pfn.as_slice() });
+
+                        current_page.dec_refcount();
+
+                        descriptor.map_page(new_pfn);
+                        descriptor.set_readonly(false);
+                    }
+                });
+
+                Ok(())
             }
         }
     }

@@ -213,6 +213,19 @@ fn handle_data_access_fault(
         } else {
             Err(PageFaultError::Unhandled)
         }
+    } else if (12..16).contains(&fsc)
+        && interrupted_user
+        && let Some(task) = SCHEDULER.get().unwrap().local_task()
+        && task.is_user_task()
+    {
+        if task
+            .handle_page_fault(PageFaultType::Permission, far as usize)
+            .is_ok()
+        {
+            Ok(regs)
+        } else {
+            Err(PageFaultError::Unhandled)
+        }
     } else {
         Err(PageFaultError::Unhandled)
     }
