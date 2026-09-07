@@ -1,4 +1,6 @@
 //! Revision 1 Ext2 FS support (no features supported).
+//!
+//! Assumes 1KB blocks as well.
 
 use crate::{
     subsystem::{

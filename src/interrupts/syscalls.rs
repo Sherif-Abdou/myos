@@ -197,7 +197,7 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     if let Ok(inode) = inode {
         let mut scratch_argv = kbox_with_len(8 * argc as usize);
-        let bytes = copy_from_user(&mut scratch_argv, unsafe {
+        let _ = copy_from_user(&mut scratch_argv, unsafe {
             core::slice::from_raw_parts(argv_addr as _, 8 * argc as usize)
         });
 
