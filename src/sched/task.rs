@@ -1,13 +1,21 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec}, elf::{ElfParser, ElfSource, Segment}, impl_link, interrupts::ExceptionRegisters, memory::{PAGE_SIZE, Pfn}, printk, sched::{
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
+    elf::{ElfParser, ElfSource, Segment},
+    impl_link,
+    interrupts::ExceptionRegisters,
+    memory::{PAGE_SIZE, Pfn},
+    printk,
+    sched::{
         Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
         lazy_buffer::{LazyPageBuffer, LazyPageUninitSource},
         restore_regs_and_eret,
-    }, subsystem::{
+    },
+    subsystem::{
         AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, PageFaultType, VmaAllocatedArea,
-    }, utils::{
+    },
+    utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
     },
@@ -143,7 +151,12 @@ pub struct UserSpaceProcess {
 
 impl Drop for UserSpaceProcess {
     fn drop(&mut self) {
-        self.user_heap.lock().release_pages(&self.page_table.lock());
+        let page_table = &self.page_table.lock();
+        self.user_heap.lock().release_pages(page_table);
+
+        for segment in self.segments.lock().iter() {
+            segment.release_pages(page_table);
+        }
     }
 }
 
@@ -272,6 +285,10 @@ impl Process {
             .user_heap
             .lock()
             .release_pages(&user_process.page_table.lock());
+
+        for segment in user_process.segments.lock().iter() {
+            segment.release_pages(&user_process.page_table.lock());
+        }
 
         *user_process.page_table.lock() = page_table;
         *user_process.segments.lock() = segments;
@@ -613,7 +630,6 @@ impl Task {
             }
         }
 
-
         Err(PageFaultError::Unhandled)
     }
 
@@ -693,7 +709,7 @@ impl TaskFdTable {
 
     pub fn fork(&self) -> TaskFdTable {
         let list = self.fds.lock();
-        let next_fd_number = AtomicUsize::new(11);
+        let next_fd_number = AtomicUsize::new(self.next_fd_number.load(SeqCst));
 
         let mut new_fds = kvec();
         for task in list.iter() {

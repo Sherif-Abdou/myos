@@ -3,10 +3,16 @@ use core::str;
 use alloc::slice;
 
 use crate::{
-    allocators::{KBox, align_up, kbox_with_len}, interrupts::{
+    allocators::{KBox, align_up, kbox_with_len},
+    interrupts::{
         ExceptionRegisters, RETURN_TABLE, daifset,
         sexc_handler::{copy_from_user, copy_to_user, user_strlen},
-    }, printk, sched::SCHEDULER, subsystem::{CONSOLE, EXT2_FS, FileSystem}, timer::us_sleep, utils::Arc,
+    },
+    printk,
+    sched::SCHEDULER,
+    subsystem::{CONSOLE, EXT2_FS, FileSystem},
+    timer::us_sleep,
+    utils::Arc,
 };
 
 pub(crate) struct Syscall {

@@ -55,7 +55,10 @@ int main(int argc, const char **argv) {
             puts(buf);
             close(fd);
         }
-        waitpid(child);
+        int ret = waitpid(child);
+        if (ret < 0) {
+            puts("Wait went incorrect\n");
+        }
 
         void *ptr = sbrk(0);
 

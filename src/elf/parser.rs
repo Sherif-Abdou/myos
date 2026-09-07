@@ -127,14 +127,15 @@ impl LazyPageBufferSource for Segment {
 
                 let end = self.filesz.saturating_sub(offset).min(PAGE_SIZE);
                 if offset == 0 {
-                    elf_source.read(self.offset + offset, &mut buf[front_padding..end]);
+                    elf_source.read(self.offset + offset, &mut buf[front_padding..(front_padding + end)]);
+                    buf[(front_padding + end)..].fill(0);
                 } else {
                     elf_source.read(
                         self.offset + offset.saturating_sub(front_padding),
                         &mut buf[..end],
                     );
+                    buf[end..].fill(0);
                 }
-                buf[end..].fill(0);
             }
             SegmentType::Zeroed => {
                 buf.fill(0);
