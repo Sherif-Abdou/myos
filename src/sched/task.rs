@@ -1,12 +1,21 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec}, elf::{ElfParser, ElfSource, Segment}, impl_link, impl_rblink, interrupts::ExceptionRegisters, memory::{PAGE_SIZE, Pfn}, sched::{
-        LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, lazy_buffer::{LazyPageBuffer, LazyPageUninitSource}, restore_regs_and_eret,
-    }, subsystem::{
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
+    elf::{ElfParser, ElfSource, Segment},
+    impl_link, impl_rblink,
+    interrupts::ExceptionRegisters,
+    memory::{PAGE_SIZE, Pfn},
+    sched::{
+        LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
+        lazy_buffer::{LazyPageBuffer, LazyPageUninitSource},
+        restore_regs_and_eret,
+    },
+    subsystem::{
         AnonPageMeta, ArmPageTableRoot, Inode, InodeOperations, PageFaultError, PageFaultType,
         VmaAllocatedArea,
-    }, utils::{
+    },
+    utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, RbLinks, RbTree, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
     },

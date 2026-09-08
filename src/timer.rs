@@ -175,27 +175,27 @@ impl<T: PartialOrd> TimerMinHeap<T> {
             let left_child = 2 * index + 1;
             let right_child = 2 * index + 2;
 
-            let mut next_index = index;
+            let child = match (left_child < len, right_child < len) {
+                (true, true) => {
+                    if self.inner[left_child] < self.inner[right_child] {
+                        left_child
+                    } else {
+                        right_child
+                    }
+                }
+                (true, false) => left_child,
+                (false, true) => right_child,
+                (false, false) => break,
+            };
 
-            if left_child < len && self.inner[index] > self.inner[left_child] {
-                let (upper, lower) = self.inner.split_at_mut(left_child);
-
-                core::mem::swap(&mut upper[index], &mut lower[0]);
-                next_index = left_child;
-            }
-
-            if right_child < len && self.inner[index] > self.inner[right_child] {
-                let (upper, lower) = self.inner.split_at_mut(right_child);
-
-                core::mem::swap(&mut upper[index], &mut lower[0]);
-                next_index = right_child;
-            }
-
-            if next_index == index {
+            if self.inner[index] <= self.inner[child] {
                 break;
-            } else {
-                index = next_index;
             }
+
+            let (upper, lower) = self.inner.split_at_mut(child);
+            core::mem::swap(&mut upper[index], &mut lower[0]);
+
+            index = child;
         }
 
         ret
