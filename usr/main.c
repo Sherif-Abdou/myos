@@ -92,14 +92,21 @@ int main(int argc, const char **argv) {
 
     pipe(array);
 
-    write(array[1], "hi\n", strlen("hi\n"));
+    int pid = fork();
 
-    char buf[8] = {0};
-    int bytes = read(array[0], buf, 8);
+    if (pid == 0) { // child
+        dup2(array[1],1);
+        ms_sleep(1000);
+        puts("hello there\n");
+        puts("I love fortnite\n");
+    } else { // parent
+        char buf[8];
+        while (1) {
+            int len = read(array[0], buf, 8);
 
-    write(fd, buf, bytes);
-
-    close(fd);
+            write(fd, buf, len);
+        }
+    }
 
     return 0;
 }

@@ -224,22 +224,24 @@ impl<'a> Ext2InodeWriteCursor<'a> {
 
     /// Allocates a free data block and updates the inode to point to it.
     fn allocate_for_current_block(&mut self) -> u32 {
-        let allocated = self.cache.allocate_data_block(self.inode_number);
-
         if self.inner.top_offset < 12 {
             // Update the block pointer directly in the inode, then flush
-            return self.fetch_or_allocate_to_top_index();
+            self.fetch_or_allocate_to_top_index()
         } else if self.inner.top_offset == 12 {
             // Fetch the offset within the linked list to update
             let single_linked_block = self.fetch_or_allocate_to_top_index();
 
             let offset_within = self.inner.l1_offset * 4;
 
+            let allocated = self.cache.allocate_data_block(self.inode_number);
+
             // Update that block pointer only.
             block_cache().write(
                 (single_linked_block * 1024 + offset_within) as usize,
                 &allocated.to_le_bytes(),
             );
+
+            allocated
         } else if self.inner.top_offset == 13 {
             // Find which linked list to look into
             let double_linked_block = self.fetch_or_allocate_to_top_index();
@@ -249,11 +251,15 @@ impl<'a> Ext2InodeWriteCursor<'a> {
                 self.fetch_or_allocate_sublist(offset_within_double, double_linked_block);
             let offset_within_single = self.inner.l2_offsets[1] * 4;
 
+            let allocated = self.cache.allocate_data_block(self.inode_number);
+
             // Update the appropriate linked list.
             block_cache().write(
                 (single_linked_block * 1024 + offset_within_single) as usize,
                 &allocated.to_le_bytes(),
             );
+
+            allocated
         } else {
             // Find which linked list to look into
             let triple_linked_block = self.fetch_or_allocate_to_top_index();
@@ -268,12 +274,16 @@ impl<'a> Ext2InodeWriteCursor<'a> {
             let single_linked_block =
                 self.fetch_or_allocate_sublist(offset_within_double, double_linked_block);
             let offset_within_single = self.inner.l3_offsets[2] * 4;
+
+            let allocated = self.cache.allocate_data_block(self.inode_number);
+
             block_cache().write(
                 (single_linked_block * 1024 + offset_within_single) as usize,
                 &allocated.to_le_bytes(),
             );
+
+            allocated
         }
-        allocated
     }
 
     pub fn write(&mut self, offset: u64, buf: &[u8]) -> usize {

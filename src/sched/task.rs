@@ -1,21 +1,12 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
-    elf::{ElfParser, ElfSource, Segment},
-    impl_link, impl_rblink,
-    interrupts::ExceptionRegisters,
-    memory::{PAGE_SIZE, Pfn},
-    sched::{
-        Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
-        lazy_buffer::{LazyPageBuffer, LazyPageUninitSource},
-        restore_regs_and_eret,
-    },
-    subsystem::{
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec}, elf::{ElfParser, ElfSource, Segment}, impl_link, impl_rblink, interrupts::ExceptionRegisters, memory::{PAGE_SIZE, Pfn}, sched::{
+        LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue, lazy_buffer::{LazyPageBuffer, LazyPageUninitSource}, restore_regs_and_eret,
+    }, subsystem::{
         AnonPageMeta, ArmPageTableRoot, Inode, InodeOperations, PageFaultError, PageFaultType,
         VmaAllocatedArea,
-    },
-    utils::{
+    }, utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, RbLinks, RbTree, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
     },
@@ -91,7 +82,7 @@ impl UserTaskStack {
     }
 }
 
-pub struct UserSpaceHeap(LazyPageBuffer<LazyPageUninitSource>);
+pub struct UserSpaceHeap(LazyPageBuffer<LazyPageZeroedSource>);
 
 impl UserSpaceHeap {
     const DEFAULT_BASE_VMA: usize = 0x800_0000;
@@ -102,7 +93,7 @@ impl UserSpaceHeap {
 
         anon_vma.insert_vma_area(TreeArc::try_from_arc(vma_area.clone()).unwrap());
 
-        Self(LazyPageBuffer::new_uninit(base_vma, base_vma))
+        Self(LazyPageBuffer::new_zeroed(base_vma, base_vma))
     }
 
     pub fn modify_end(&mut self, offset: isize, table: &ArmPageTableRoot) -> usize {

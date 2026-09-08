@@ -71,6 +71,9 @@ impl InodeOperations for Pipe {
                 pipe.push(buffer[bytes]);
                 bytes += 1;
             }
+
+            self.tx_waiters.unblock_all();
+
             return Ok(bytes);
         }
     }
