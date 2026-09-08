@@ -186,21 +186,53 @@ impl<'a> Ext2InodeWriteCursor<'a> {
         self.inner.get_current_block()
     }
 
-    /// Allocates a free data block and updates the inode to point to it.
-    fn allocate_for_current_block(&mut self) -> u32 {
-        let allocated = self.cache.allocate_data_block(self.inode_number);
-
-        let mut buf = [0u8; 4];
-
-        if self.inner.top_offset < 12 {
-            // Update the block pointer directly in the inode, then flush
+    fn fetch_or_allocate_to_top_index(&mut self) -> u32 {
+        let block = self.inner.inode.block.lock()[self.inner.top_offset as usize];
+        if block == 0 {
+            let allocated = self.cache.allocate_data_block(self.inode_number);
             self.inner.inode.block.lock()[self.inner.top_offset as usize] = allocated;
             self.cache.modify_node(self.inode_number, |inode| {
                 inode.block = *self.inner.inode.block.lock();
             });
+            allocated
+        } else {
+            block
+        }
+    }
+
+    fn fetch_or_allocate_sublist(&self, offset: u32, block: u32) -> u32 {
+        let mut buf = [0u8; 4];
+        let offset_within_block = offset;
+        block_cache().read((block * 1024 + offset_within_block) as usize, &mut buf);
+
+        let parsed_block = u32::from_le_bytes(buf);
+        if parsed_block == 0 {
+            let allocated = self.cache.allocate_data_block(self.inode_number);
+
+            block_cache().write(allocated as usize * 1024, &[0; 1024]);
+
+            block_cache().write(
+                (block * 1024 + offset_within_block) as usize,
+                &allocated.to_le_bytes(),
+            );
+
+            allocated
+        } else {
+            parsed_block
+        }
+    }
+
+    /// Allocates a free data block and updates the inode to point to it.
+    fn allocate_for_current_block(&mut self) -> u32 {
+        let allocated = self.cache.allocate_data_block(self.inode_number);
+
+        if self.inner.top_offset < 12 {
+            // Update the block pointer directly in the inode, then flush
+            return self.fetch_or_allocate_to_top_index();
         } else if self.inner.top_offset == 12 {
             // Fetch the offset within the linked list to update
-            let single_linked_block = self.inner.inode.block.lock()[self.inner.top_offset as usize];
+            let single_linked_block = self.fetch_or_allocate_to_top_index();
+
             let offset_within = self.inner.l1_offset * 4;
 
             // Update that block pointer only.
@@ -210,39 +242,31 @@ impl<'a> Ext2InodeWriteCursor<'a> {
             );
         } else if self.inner.top_offset == 13 {
             // Find which linked list to look into
-            let double_linked_block = self.inner.inode.block.lock()[self.inner.top_offset as usize];
+            let double_linked_block = self.fetch_or_allocate_to_top_index();
             let offset_within_double = self.inner.l2_offsets[0] * 4;
-            block_cache().read(
-                (double_linked_block * 1024 + offset_within_double) as usize,
-                &mut buf,
-            );
+
+            let single_linked_block =
+                self.fetch_or_allocate_sublist(offset_within_double, double_linked_block);
+            let offset_within_single = self.inner.l2_offsets[1] * 4;
 
             // Update the appropriate linked list.
-            let single_linked_block = u32::from_le_bytes(buf);
-            let offset_within_single = self.inner.l2_offsets[1] * 4;
             block_cache().write(
                 (single_linked_block * 1024 + offset_within_single) as usize,
                 &allocated.to_le_bytes(),
             );
         } else {
             // Find which linked list to look into
-            let triple_linked_block = self.inner.inode.block.lock()[self.inner.top_offset as usize];
+            let triple_linked_block = self.fetch_or_allocate_to_top_index();
             let offset_within_triple = self.inner.l3_offsets[0] * 4;
-            block_cache().read(
-                (triple_linked_block * 1024 + offset_within_triple) as usize,
-                &mut buf,
-            );
 
             // Find which linked list to look into
-            let double_linked_block = u32::from_le_bytes(buf);
+            let double_linked_block =
+                self.fetch_or_allocate_sublist(offset_within_triple, triple_linked_block);
             let offset_within_double = self.inner.l3_offsets[1] * 4;
-            block_cache().read(
-                (double_linked_block * 1024 + offset_within_double) as usize,
-                &mut buf,
-            );
 
             // Update the appropriate linked list.
-            let single_linked_block = u32::from_le_bytes(buf);
+            let single_linked_block =
+                self.fetch_or_allocate_sublist(offset_within_double, double_linked_block);
             let offset_within_single = self.inner.l3_offsets[2] * 4;
             block_cache().write(
                 (single_linked_block * 1024 + offset_within_single) as usize,
@@ -306,7 +330,7 @@ impl<'a> Ext2InodeWriteCursor<'a> {
         cursor.jump_to(0);
         while cursor.get_current_block() != 0 && offset < file_size {
             let mut local_block_offset = 0;
-            while local_block_offset < 1024 {
+            while local_block_offset < 1024 && offset < file_size {
                 let _ = cursor.read(offset, &mut dentry_header);
                 let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
 

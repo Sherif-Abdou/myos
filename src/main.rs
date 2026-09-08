@@ -192,10 +192,4 @@ pub fn threaded_init(_arg: *mut ()) {
     SCHEDULER.get().unwrap().load_program(Arc::new(ELF_FILE));
 
     printk!("Kernel initialized\n");
-
-    loop {
-        unsafe {
-            asm!("wfi");
-        }
-    }
 }

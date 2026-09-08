@@ -83,13 +83,14 @@ impl InodeOperations for Ext2InodeWrapper {
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
         let mut offset = 0;
+        let mut inner_offset = 0;
         let mut dentry_header = [0u8; 8];
 
         let mut name_buffer = [0u8; 32];
 
         cursor.jump_to(0);
         while cursor.get_current_block() != 0 {
-            while offset < self.super_block.block_size() {
+            while inner_offset < self.super_block.block_size() {
                 let _ = cursor.read(offset, &mut dentry_header);
                 let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
                 let inode_number = unsafe { (*overlay).inode };
@@ -114,9 +115,11 @@ impl InodeOperations for Ext2InodeWrapper {
                 }
                 let rec_len = unsafe { (*overlay).rec_len as u64 };
                 offset += rec_len;
+                inner_offset += rec_len;
             }
 
             cursor.next_block();
+            inner_offset = 0;
         }
 
         Ok(())
