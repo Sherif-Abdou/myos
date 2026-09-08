@@ -63,3 +63,24 @@ macro_rules! printk {
         }
     };
 }
+
+pub struct ConsoleDeviceFile;
+
+impl InodeOperations for ConsoleDeviceFile {
+    fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+        let _ = offset;
+
+        Ok(CONSOLE.get().unwrap().read(buffer))
+    }
+
+    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+        let _ = offset;
+
+        let _ = CONSOLE
+            .get()
+            .unwrap()
+            .write_str(unsafe { str::from_utf8_unchecked(buffer) });
+
+        Ok(())
+    }
+}

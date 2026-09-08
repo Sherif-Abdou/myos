@@ -45,6 +45,13 @@ pub trait InodeOperations: Send + Sync + 'static {
         Err(FsError::Unsupported)
     }
 
+    fn create_file_with_ops(&self, name: &str, ops: Arc<dyn InodeOperations>) -> FsResult<()> {
+        let _ = name;
+        let _ = ops;
+
+        Err(FsError::Unsupported)
+    }
+
     fn create_directory(&self, name: &str) -> FsResult<()> {
         let _ = name;
 
@@ -129,6 +136,10 @@ impl Inode {
 
     pub fn create_file(&self, name: &str) -> FsResult<()> {
         self.operations.lock().create_file(name)
+    }
+
+    pub fn create_file_with_ops(&self, name: &str, ops: Arc<dyn InodeOperations>) -> FsResult<()> {
+        self.operations.lock().create_file_with_ops(name, ops)
     }
 
     pub fn create_directory(&self, name: &str) -> FsResult<()> {

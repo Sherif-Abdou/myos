@@ -141,6 +141,17 @@ impl InodeOperations for InodeDirectory {
 
         Ok(())
     }
+
+    fn create_file_with_ops(&self, name: &str, ops: Arc<dyn InodeOperations>) -> FsResult<()> {
+        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(ops)).into();
+
+        node.meta().set_name(name);
+
+        self.children.lock().push_back(node);
+
+        Ok(())
+    }
+
 }
 
 impl InodeDirectory {
@@ -229,7 +240,7 @@ impl FileSystem for TmpFs {
         let num_parts = path.chars().filter(|c| *c == '/').count();
 
         let mut current = self.root();
-        for part in parts.take(num_parts - 1) {
+        for part in parts.take(num_parts.saturating_sub(1)) {
             if part.is_empty() {
                 continue;
             }
@@ -252,6 +263,51 @@ impl FileSystem for TmpFs {
 
         let child_to_create = path.split('/').nth(num_parts).unwrap();
         current.create_file(child_to_create)?;
+
+        current.list_directory(|list| {
+            let mut cursor = list.cursor();
+            while cursor
+                .get()
+                .is_some_and(|child| child.meta().name() != child_to_create)
+            {
+                let _ = cursor.next();
+            }
+
+            cursor
+                .get_arc()
+                .map(|wrapper| (*wrapper).clone())
+                .ok_or(FsError::NoExist)
+        })?
+    }
+
+    fn create_with_ops(&self, path: &str, ops: Arc<dyn InodeOperations>) -> FsResult<Arc<Inode>> {
+        let parts = path.split("/");
+        let num_parts = path.chars().filter(|c| *c == '/').count();
+
+        let mut current = self.root();
+        for part in parts.take(num_parts.saturating_sub(1)) {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor
+                    .get()
+                    .is_some_and(|child| child.meta().name() != part)
+                {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = (*child).clone();
+        }
+
+        let child_to_create = path.split('/').nth(num_parts).unwrap();
+        current.create_file_with_ops(child_to_create, ops)?;
 
         current.list_directory(|list| {
             let mut cursor = list.cursor();

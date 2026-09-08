@@ -3,16 +3,10 @@ use core::str;
 use alloc::slice;
 
 use crate::{
-    allocators::{KBox, align_up, kbox_with_len},
-    interrupts::{
+    allocators::{KBox, align_up, kbox_with_len}, interrupts::{
         ExceptionRegisters, RETURN_TABLE, daifset,
         sexc_handler::{copy_from_user, copy_to_user, user_strlen},
-    },
-    printk,
-    sched::SCHEDULER,
-    subsystem::{CONSOLE, EXT2_FS, FileSystem},
-    timer::us_sleep,
-    utils::Arc,
+    }, printk, sched::SCHEDULER, subsystem::{CONSOLE, EXT2_FS, FileSystem, MOUNT_TABLE}, timer::us_sleep, utils::Arc,
 };
 
 pub(crate) struct Syscall {
@@ -42,7 +36,7 @@ pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let mut kernel_buf = kbox_with_len(len);
 
-    if descriptor == 0 {
+    if descriptor == 1 {
         let user_buf = unsafe { slice::from_raw_parts(addr, len) };
         let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
         let str = str::from_utf8(&kernel_buf[..len]).unwrap();
@@ -80,7 +74,7 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let mut scratch = kbox_with_len(len);
 
-    if descriptor == 1 {
+    if descriptor == 0 {
         let len = CONSOLE.get().unwrap().read(&mut scratch);
 
         let len = copy_to_user(&mut user_buf[..len], &scratch[..len]);
@@ -124,7 +118,7 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-    let inode = EXT2_FS.get().unwrap().open(path);
+    let inode = MOUNT_TABLE.get().unwrap().open(path);
 
     if let Ok(inode) = inode {
         let descriptor = task.user_fd_table().unwrap().add_file_fd(inode);
@@ -193,7 +187,7 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-    let inode = EXT2_FS.get().unwrap().open(path);
+    let inode = MOUNT_TABLE.get().unwrap().open(path);
 
     if let Ok(inode) = inode {
         let mut scratch_argv = kbox_with_len(8 * argc as usize);

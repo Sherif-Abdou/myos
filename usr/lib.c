@@ -56,14 +56,14 @@ int fork() { return syscall(20, 0, 0, 0, 0, 0, 0, 0, 0); }
 int waitpid(int pid) { return syscall(27, pid, 0, 0, 0, 0, 0, 0, 0); }
 
 int puts(const char *str) {
-    write(0, str, strlen(str));
+    write(1, str, strlen(str));
     return 0;
 }
 
 int putchar(int c) {
     char buf = c;
 
-    write(0, &buf, 1);
+    write(1, &buf, 1);
     return 0;
 }
 

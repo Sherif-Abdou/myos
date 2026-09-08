@@ -14,7 +14,7 @@ void shell(void) {
 
     puts("# ");
     while (1) {
-        size_t bytes_read = read(1, line + cursor, 63 - cursor);
+        size_t bytes_read = read(0, line + cursor, 63 - cursor);
         if (bytes_read > 0) {
             for (int i = 0; i < bytes_read; ++i) {
                 if (line[cursor] == 127) {
@@ -37,7 +37,7 @@ void shell(void) {
     }
 }
 
-int main(int argc, const char **argv) {
+void toy(void) {
     a = 50;
     int child = fork();
     if (child != 0) {
@@ -81,6 +81,14 @@ int main(int argc, const char **argv) {
         a = 27;
         exec("other", 2, buf);
     }
+}
+
+int main(int argc, const char **argv) {
+    int fd = open("/dev/console");
+
+    write(fd, "hello\n", strlen("hello\n"));
+
+    close(fd);
 
     return 0;
 }

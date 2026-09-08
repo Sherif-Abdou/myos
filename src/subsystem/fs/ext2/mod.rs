@@ -82,7 +82,7 @@ impl FileSystem for Ext2Fs {
         let num_parts = path.chars().filter(|c| *c == '/').count();
 
         let mut current = self.root();
-        for part in parts.take(num_parts - 1) {
+        for part in parts.take(num_parts.saturating_sub(1)) {
             if part.is_empty() {
                 continue;
             }

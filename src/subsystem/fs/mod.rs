@@ -1,11 +1,13 @@
 mod ext2;
 mod inode;
+mod mounts;
 mod tmpfs;
 
 use crate::utils::{Arc, List, ListLinkWrapper};
 
 pub use ext2::{EXT2_FS, Ext2Fs};
 pub use inode::*;
+pub use mounts::*;
 pub use tmpfs::TmpFs;
 
 #[allow(unused_variables)]
@@ -31,7 +33,10 @@ pub trait FileSystem {
     fn list_directory<R, F: FnOnce(&List<ListLinkWrapper<Arc<Inode>>>) -> R>(
         &self,
         func: F,
-    ) -> FsResult<R> {
+    ) -> FsResult<R>
+    where
+        Self: Sized,
+    {
         self.root().list_directory(func)
     }
 
@@ -40,6 +45,10 @@ pub trait FileSystem {
     }
 
     fn create(&self, path: &str) -> FsResult<Arc<Inode>> {
+        Err(FsError::Unsupported)
+    }
+
+    fn create_with_ops(&self, path: &str, ops: Arc<dyn InodeOperations>) -> FsResult<Arc<Inode>> {
         Err(FsError::Unsupported)
     }
 }
