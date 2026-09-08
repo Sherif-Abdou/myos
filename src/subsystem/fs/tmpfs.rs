@@ -67,7 +67,7 @@ impl InodeOperations for Mutex<InodeFile> {
         Ok(bytes_read)
     }
 
-    fn write(&self, mut offset: u64, buffer: &[u8]) -> FsResult<()> {
+    fn write(&self, mut offset: u64, buffer: &[u8]) -> FsResult<usize> {
         let mut inner = self.lock();
         let mut cursor = inner.blocks.cursor_mut();
         let mut bytes_written = 0;
@@ -106,7 +106,7 @@ impl InodeOperations for Mutex<InodeFile> {
             }
         }
 
-        Ok(())
+        Ok(bytes_written)
     }
 }
 

@@ -8,9 +8,8 @@ use crate::{
         ExceptionRegisters, RETURN_TABLE, daifset,
         sexc_handler::{copy_from_user, copy_to_user, user_strlen},
     },
-    printk,
     sched::SCHEDULER,
-    subsystem::{CONSOLE, EXT2_FS, FileSystem, MOUNT_TABLE},
+    subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe},
     timer::us_sleep,
     utils::Arc,
 };
@@ -292,6 +291,33 @@ pub fn fork(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn pipe(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let user_output = unsafe { (*regs).gprs[0] } as *mut u8;
+
+    let mut scratch = [0u8; 8];
+
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    let pipe: Arc<dyn InodeOperations> = Arc::new(Pipe::new());
+
+    let descriptor1 = task.user_fd_table().unwrap().add_anon_file_fd(pipe.clone()) as u32;
+    let descriptor2 = task.user_fd_table().unwrap().add_anon_file_fd(pipe.clone()) as u32;
+
+    scratch[..4].copy_from_slice(&descriptor1.to_le_bytes());
+    scratch[4..8].copy_from_slice(&descriptor2.to_le_bytes());
+
+    copy_to_user(
+        unsafe { slice::from_raw_parts_mut(user_output, 8) },
+        &scratch,
+    );
+
+    unsafe {
+        (*regs).gprs[0] = 0;
+    }
+
+    regs
+}
+
 pub fn sbrk(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
@@ -323,6 +349,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[22] = Syscall::new(exec);
     table[27] = Syscall::new(waitpid);
     table[33] = Syscall::new(sbrk);
+    table[40] = Syscall::new(pipe);
     table[50] = Syscall::new(exit);
 
     table

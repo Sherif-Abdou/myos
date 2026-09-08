@@ -60,14 +60,14 @@ impl InodeOperations for Ext2InodeWrapper {
         Ok(cursor.read(offset, buffer))
     }
 
-    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
         let _lock = self.io_lock.lock();
 
         let mut write_cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
-        let _ = write_cursor.write(offset, buffer);
+        let written = write_cursor.write(offset, buffer);
 
-        Ok(())
+        Ok(written)
     }
 
     fn list_directory(

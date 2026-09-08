@@ -45,7 +45,7 @@ int open(const char *path) {
     return syscall(8, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }
 
-int exec(const char *path, int argc, const char ** argv) {
+int exec(const char *path, int argc, const char **argv) {
     return syscall(22, (uintptr_t)path, argc, (uintptr_t)argv, 0, 0, 0, 0, 0);
 }
 
@@ -71,6 +71,8 @@ int putchar(int c) {
     return 0;
 }
 
+int pipe(int *fds) { return syscall(40, (uintptr_t)fds, 0, 0, 0, 0, 0, 0, 0); }
+
 int ns_sleep(long long delay_ns) {
     syscall(17, delay_ns, 0, 0, 0, 0, 0, 0, 0);
 
@@ -78,12 +80,11 @@ int ns_sleep(long long delay_ns) {
 }
 
 void *sbrk(long long offset) {
-    return (void*)syscall(33, (uintptr_t)offset, 0, 0, 0, 0, 0, 0, 0);
-
+    return (void *)syscall(33, (uintptr_t)offset, 0, 0, 0, 0, 0, 0, 0);
 }
 
-int ms_sleep(long long delay_ms) { 
-    ns_sleep(delay_ms * 1000000); 
+int ms_sleep(long long delay_ms) {
+    ns_sleep(delay_ms * 1000000);
     return 0;
 }
 
@@ -95,13 +96,11 @@ void exit(int code) {
 __attribute__((weak)) int main(int argc, const char **argv);
 
 int _start() {
-    unsigned long argc; 
+    unsigned long argc;
     const char **argv;
-    __asm__ volatile (
-        "mov %0, x0\n"
-        "mov %1, x1\n"
-        : "=r"(argc), "=r"(argv) :: "x0", "x1"
-    );
+    __asm__ volatile("mov %0, x0\n"
+                     "mov %1, x1\n"
+                     : "=r"(argc), "=r"(argv)::"x0", "x1");
 
     int ret = main(argc, argv);
 

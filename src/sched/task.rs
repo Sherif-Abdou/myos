@@ -12,7 +12,8 @@ use crate::{
         restore_regs_and_eret,
     },
     subsystem::{
-        AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, PageFaultType, VmaAllocatedArea,
+        AnonPageMeta, ArmPageTableRoot, Inode, InodeOperations, PageFaultError, PageFaultType,
+        VmaAllocatedArea,
     },
     utils::{
         Arc, List, ListArc, ListLinks, PhysAddr, RbLinks, RbTree, SpinLock, TreeArc, UniqueArc,
@@ -688,6 +689,25 @@ impl TaskFdTable {
         descriptor
     }
 
+    pub fn add_anon_file_fd(&self, inode_ops: Arc<dyn InodeOperations>) -> usize {
+        let mut fds = self.fds.lock();
+        let descriptor = self.next_fd_number.fetch_add(1, SeqCst);
+
+        fds.insert(
+            UniqueArc::new(TaskFd {
+                descriptor,
+                inner: Arc::new(TaskFdInner::AnonFile {
+                    inode_ops,
+                    offset: AtomicUsize::new(0),
+                }),
+                links: RbLinks::new(),
+            })
+            .into(),
+        );
+
+        descriptor
+    }
+
     pub fn dup_fd(&self, dst: u32, src: u32) -> Result<(), ()> {
         let mut fds = self.fds.lock();
 
@@ -753,6 +773,10 @@ enum TaskFdInner {
         inode: Arc<Inode>,
         offset: AtomicUsize,
     },
+    AnonFile {
+        inode_ops: Arc<dyn InodeOperations>,
+        offset: AtomicUsize,
+    },
 }
 
 impl TaskFd {
@@ -770,6 +794,14 @@ impl TaskFd {
                 descriptor: self.descriptor,
                 inner: Arc::new(TaskFdInner::File {
                     inode: inode.clone(),
+                    offset: AtomicUsize::new(offset.load(SeqCst)),
+                }),
+                links: RbLinks::new(),
+            },
+            TaskFdInner::AnonFile { inode_ops, offset } => TaskFd {
+                descriptor: self.descriptor,
+                inner: Arc::new(TaskFdInner::AnonFile {
+                    inode_ops: inode_ops.clone(),
                     offset: AtomicUsize::new(offset.load(SeqCst)),
                 }),
                 links: RbLinks::new(),
@@ -793,6 +825,16 @@ impl TaskFd {
                     -1
                 }
             }
+            TaskFdInner::AnonFile { inode_ops, offset } => {
+                let local_offset = offset.load(SeqCst);
+                if let Ok(read) = inode_ops.read(local_offset as u64, buf) {
+                    offset.fetch_add(read, SeqCst);
+
+                    read as isize
+                } else {
+                    -1
+                }
+            }
         }
     }
 
@@ -800,10 +842,20 @@ impl TaskFd {
         match &*self.inner {
             TaskFdInner::File { inode, offset } => {
                 let local_offset = offset.load(SeqCst);
-                if let Ok(()) = inode.write(local_offset as u64, buf) {
-                    offset.fetch_add(buf.len(), SeqCst);
+                if let Ok(len) = inode.write(local_offset as u64, buf) {
+                    offset.fetch_add(len, SeqCst);
 
-                    buf.len() as isize
+                    len as isize
+                } else {
+                    -1
+                }
+            }
+            TaskFdInner::AnonFile { inode_ops, offset } => {
+                let local_offset = offset.load(SeqCst);
+                if let Ok(len) = inode_ops.write(local_offset as u64, buf) {
+                    offset.fetch_add(len, SeqCst);
+
+                    len as isize
                 } else {
                     -1
                 }

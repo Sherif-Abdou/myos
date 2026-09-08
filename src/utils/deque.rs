@@ -29,6 +29,10 @@ impl<T, const N: usize> Deque<T, N> {
         self.len
     }
 
+    pub const fn free(&self) -> usize {
+        N - self.len
+    }
+
     pub const fn push(&mut self, value: T) {
         assert!(!self.is_full());
         let index = self.end;

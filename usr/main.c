@@ -86,9 +86,18 @@ void toy(void) {
 int main(int argc, const char **argv) {
     int fd = open("/dev/console");
 
-    dup2(fd, 512);
-    write(fd, "hello\n", strlen("hello\n"));
-    write(512, "world\n", strlen("world\n"));
+    write(fd, "world\n", strlen("world\n"));
+
+    int array[2] = {0, 0};
+
+    pipe(array);
+
+    write(array[1], "hi\n", strlen("hi\n"));
+
+    char buf[8] = {0};
+    int bytes = read(array[0], buf, 8);
+
+    write(fd, buf, bytes);
 
     close(fd);
 

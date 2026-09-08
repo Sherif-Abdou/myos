@@ -27,6 +27,8 @@ int puts(const char *str);
 
 int putchar(int c);
 
+int pipe(int fds[2]);
+
 int ns_sleep(long long delay_ns);
 
 int ms_sleep(long long delay_ms);

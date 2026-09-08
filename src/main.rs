@@ -37,8 +37,8 @@ use crate::{
     sched::{SCHEDULER, create_local_idle_task, init_scheduler},
     smp::bringup_core,
     subsystem::{
-        ConsoleDeviceFile, EXT2_FS, Ext2Fs, FileSystem, KERNEL_PAGE_TABLE, MOUNT_TABLE, MountTable,
-        TmpFs, build_kernel_page_table,
+        ConsoleDeviceFile, Ext2Fs, FileSystem, KERNEL_PAGE_TABLE, MOUNT_TABLE, MountTable, TmpFs,
+        build_kernel_page_table,
     },
     timer::{TIMER_QUEUE, TimerQueue},
     utils::{Arc, ArcAny, OnceSpinLock},

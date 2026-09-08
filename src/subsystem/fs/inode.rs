@@ -26,7 +26,7 @@ pub trait InodeOperations: Send + Sync + 'static {
         Err(FsError::Unsupported)
     }
 
-    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
         let _ = offset;
         let _ = buffer;
 
@@ -120,7 +120,7 @@ impl Inode {
         self.contents().read(offset, buffer)
     }
 
-    pub fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<()> {
+    pub fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
         self.contents().write(offset, buffer)
     }
 
