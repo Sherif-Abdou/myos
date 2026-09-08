@@ -28,9 +28,20 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, create_local_idle_task, init_scheduler}, smp::bringup_core, subsystem::{
-        ConsoleDeviceFile, EXT2_FS, Ext2Fs, FileSystem, KERNEL_PAGE_TABLE, MOUNT_TABLE, MountTable, TmpFs, build_kernel_page_table,
-    }, timer::{TIMER_QUEUE, TimerQueue}, utils::{Arc, ArcAny, OnceSpinLock},
+    allocators::{KBox, kbox},
+    arm_pl::init_from_dtb_node,
+    driver::DeviceBus,
+    dtb::{Fdt, find_earlyconsole_node},
+    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
+    memory::init_allocator,
+    sched::{SCHEDULER, create_local_idle_task, init_scheduler},
+    smp::bringup_core,
+    subsystem::{
+        ConsoleDeviceFile, EXT2_FS, Ext2Fs, FileSystem, KERNEL_PAGE_TABLE, MOUNT_TABLE, MountTable,
+        TmpFs, build_kernel_page_table,
+    },
+    timer::{TIMER_QUEUE, TimerQueue},
+    utils::{Arc, ArcAny, OnceSpinLock},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -177,9 +188,15 @@ pub fn threaded_init(_arg: *mut ()) {
     printk!("Walked DTS\n");
 
     let _ = MOUNT_TABLE.set(MountTable::new(kbox(Ext2Fs::new())));
-    MOUNT_TABLE.get().unwrap().mount("/dev/", kbox(TmpFs::new()));
-    MOUNT_TABLE.get().unwrap().create_with_ops("/dev/console", Arc::new(ConsoleDeviceFile)).expect("Could not create console device");
-
+    MOUNT_TABLE
+        .get()
+        .unwrap()
+        .mount("/dev/", kbox(TmpFs::new()));
+    MOUNT_TABLE
+        .get()
+        .unwrap()
+        .create_with_ops("/dev/console", Arc::new(ConsoleDeviceFile))
+        .expect("Could not create console device");
 
     static ELF_FILE: &[u8] = include_bytes!("../usr/main");
 

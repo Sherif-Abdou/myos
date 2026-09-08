@@ -3,10 +3,16 @@ use core::str;
 use alloc::slice;
 
 use crate::{
-    allocators::{KBox, align_up, kbox_with_len}, interrupts::{
+    allocators::{KBox, align_up, kbox_with_len},
+    interrupts::{
         ExceptionRegisters, RETURN_TABLE, daifset,
         sexc_handler::{copy_from_user, copy_to_user, user_strlen},
-    }, printk, sched::SCHEDULER, subsystem::{CONSOLE, EXT2_FS, FileSystem, MOUNT_TABLE}, timer::us_sleep, utils::Arc,
+    },
+    printk,
+    sched::SCHEDULER,
+    subsystem::{CONSOLE, EXT2_FS, FileSystem, MOUNT_TABLE},
+    timer::us_sleep,
+    utils::Arc,
 };
 
 pub(crate) struct Syscall {
@@ -36,31 +42,19 @@ pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let mut kernel_buf = kbox_with_len(len);
 
-    if descriptor == 1 {
-        let user_buf = unsafe { slice::from_raw_parts(addr, len) };
-        let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
-        let str = str::from_utf8(&kernel_buf[..len]).unwrap();
+    let user_buf = unsafe { slice::from_raw_parts(addr, len) };
 
-        printk!("{}", str);
+    let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
 
-        unsafe {
-            (*regs).gprs[0] = str.len() as u64;
-        }
-    } else {
-        let user_buf = unsafe { slice::from_raw_parts(addr, len) };
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-        let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
+    let ret = task
+        .user_fd_table()
+        .unwrap()
+        .write(descriptor, &kernel_buf[..len]);
 
-        let task = SCHEDULER.get().unwrap().local_task().unwrap();
-
-        let ret = task
-            .user_fd_table()
-            .unwrap()
-            .write(descriptor, &kernel_buf[..len]);
-
-        unsafe {
-            (*regs).gprs[0] = ret as u64;
-        }
+    unsafe {
+        (*regs).gprs[0] = ret as u64;
     }
 
     regs
@@ -74,30 +68,20 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let mut scratch = kbox_with_len(len);
 
-    if descriptor == 0 {
-        let len = CONSOLE.get().unwrap().read(&mut scratch);
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
+    let ret = task.user_fd_table().unwrap().read(descriptor, &mut scratch);
+
+    if ret < 0 {
+        unsafe {
+            (*regs).gprs[0] = ret as u64;
+        }
+    } else {
+        let len = ret as usize;
         let len = copy_to_user(&mut user_buf[..len], &scratch[..len]);
 
         unsafe {
             (*regs).gprs[0] = len as u64;
-        }
-    } else {
-        let task = SCHEDULER.get().unwrap().local_task().unwrap();
-
-        let ret = task.user_fd_table().unwrap().read(descriptor, &mut scratch);
-
-        if ret < 0 {
-            unsafe {
-                (*regs).gprs[0] = ret as u64;
-            }
-        } else {
-            let len = ret as usize;
-            let len = copy_to_user(&mut user_buf[..len], &scratch[..len]);
-
-            unsafe {
-                (*regs).gprs[0] = len as u64;
-            }
         }
     }
 
@@ -209,6 +193,30 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn dup2(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let old_fd = unsafe { (*regs).gprs[0] };
+    let new_fd = unsafe { (*regs).gprs[1] };
+
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    if task
+        .user_fd_table()
+        .unwrap()
+        .dup_fd(new_fd as u32, old_fd as u32)
+        .is_ok()
+    {
+        unsafe {
+            (*regs).gprs[0] = 0i64 as u64;
+        }
+    } else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+    }
+
+    regs
+}
+
 pub fn close(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] };
 
@@ -309,6 +317,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[1] = Syscall::new(read);
     table[8] = Syscall::new(open);
     table[11] = Syscall::new(close);
+    table[14] = Syscall::new(dup2);
     table[17] = Syscall::new(nanosleep);
     table[20] = Syscall::new(fork);
     table[22] = Syscall::new(exec);

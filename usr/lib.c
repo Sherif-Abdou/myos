@@ -49,6 +49,10 @@ int exec(const char *path, int argc, const char ** argv) {
     return syscall(22, (uintptr_t)path, argc, (uintptr_t)argv, 0, 0, 0, 0, 0);
 }
 
+int dup2(int old_fd, int new_fd) {
+    return syscall(14, old_fd, new_fd, 0, 0, 0, 0, 0, 0);
+}
+
 int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
 
 int fork() { return syscall(20, 0, 0, 0, 0, 0, 0, 0, 0); }
@@ -91,7 +95,8 @@ void exit(int code) {
 __attribute__((weak)) int main(int argc, const char **argv);
 
 int _start() {
-    int argc; const char **argv;
+    unsigned long argc; 
+    const char **argv;
     __asm__ volatile (
         "mov %0, x0\n"
         "mov %1, x1\n"

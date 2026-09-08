@@ -15,6 +15,8 @@ int open(const char *path);
 
 int exec(const char *path, int argc, const char ** argv);
 
+int dup2(int old_fd, int new_fd);
+
 int close(int fd);
 
 int fork();

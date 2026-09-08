@@ -86,7 +86,9 @@ void toy(void) {
 int main(int argc, const char **argv) {
     int fd = open("/dev/console");
 
+    dup2(fd, 512);
     write(fd, "hello\n", strlen("hello\n"));
+    write(512, "world\n", strlen("world\n"));
 
     close(fd);
 

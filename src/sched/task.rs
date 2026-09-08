@@ -3,10 +3,9 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
     elf::{ElfParser, ElfSource, Segment},
-    impl_link,
+    impl_link, impl_rblink,
     interrupts::ExceptionRegisters,
     memory::{PAGE_SIZE, Pfn},
-    printk,
     sched::{
         Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
         lazy_buffer::{LazyPageBuffer, LazyPageUninitSource},
@@ -16,7 +15,7 @@ use crate::{
         AnonPageMeta, ArmPageTableRoot, Inode, PageFaultError, PageFaultType, VmaAllocatedArea,
     },
     utils::{
-        Arc, List, ListArc, ListLinks, PhysAddr, SpinLock, TreeArc, UniqueArc,
+        Arc, List, ListArc, ListLinks, PhysAddr, RbLinks, RbTree, SpinLock, TreeArc, UniqueArc,
         with_core_critical_section,
     },
 };
@@ -658,14 +657,14 @@ pub(crate) fn create_user_stack() -> KBox<UserTaskStack> {
 impl_link!(Task, 0 => run_queue_links, 1 => parent_links);
 
 pub struct TaskFdTable {
-    fds: Mutex<KVec<TaskFd>>,
+    fds: Mutex<RbTree<TaskFd>>,
     next_fd_number: AtomicUsize,
 }
 
 impl TaskFdTable {
     pub fn new() -> Self {
         Self {
-            fds: Mutex::new(kvec()),
+            fds: Mutex::new(RbTree::new()),
             next_fd_number: AtomicUsize::new(11),
         }
     }
@@ -674,18 +673,36 @@ impl TaskFdTable {
         let mut fds = self.fds.lock();
         let descriptor = self.next_fd_number.fetch_add(1, SeqCst);
 
-        fds.push(TaskFd::File {
-            descriptor,
-            inode,
-            offset: AtomicUsize::new(0),
-        });
+        fds.insert(
+            UniqueArc::new(TaskFd {
+                descriptor,
+                inner: Arc::new(TaskFdInner::File {
+                    inode,
+                    offset: AtomicUsize::new(0),
+                }),
+                links: RbLinks::new(),
+            })
+            .into(),
+        );
 
         descriptor
     }
 
+    pub fn dup_fd(&self, dst: u32, src: u32) -> Result<(), ()> {
+        let mut fds = self.fds.lock();
+
+        let Some(src) = fds.find(src as usize) else {
+            return Err(());
+        };
+        fds.remove_key(dst as usize);
+        fds.insert(UniqueArc::new(src.dup(dst as usize)).into());
+
+        Ok(())
+    }
+
     pub fn read(&self, descriptor: usize, buf: &mut [u8]) -> isize {
         let fds = self.fds.lock();
-        let Some(fd) = fds.iter().find(|fd| fd.descriptor() == descriptor) else {
+        let Some(fd) = fds.find(descriptor) else {
             return -1;
         };
 
@@ -694,7 +711,7 @@ impl TaskFdTable {
 
     pub fn write(&self, descriptor: usize, buf: &[u8]) -> isize {
         let fds = self.fds.lock();
-        let Some(fd) = fds.iter().find(|fd| fd.descriptor() == descriptor) else {
+        let Some(fd) = fds.find(descriptor) else {
             return -1;
         };
 
@@ -704,16 +721,16 @@ impl TaskFdTable {
     pub fn close(&self, descriptor: usize) {
         let mut fds = self.fds.lock();
 
-        fds.retain(|fd| fd.descriptor() != descriptor);
+        fds.remove_key(descriptor);
     }
 
     pub fn fork(&self) -> TaskFdTable {
         let list = self.fds.lock();
         let next_fd_number = AtomicUsize::new(self.next_fd_number.load(SeqCst));
 
-        let mut new_fds = kvec();
-        for task in list.iter() {
-            new_fds.push(task.fork());
+        let mut new_fds = RbTree::new();
+        for task in list.cursor() {
+            new_fds.insert(UniqueArc::new(task.fork()).into());
         }
 
         TaskFdTable {
@@ -723,46 +740,50 @@ impl TaskFdTable {
     }
 }
 
-enum TaskFd {
+struct TaskFd {
+    descriptor: usize,
+    inner: Arc<TaskFdInner>,
+    links: RbLinks,
+}
+
+impl_rblink!(TaskFd, let descriptor: usize = { 0 => links });
+
+enum TaskFdInner {
     File {
-        descriptor: usize,
         inode: Arc<Inode>,
         offset: AtomicUsize,
     },
 }
 
 impl TaskFd {
+    pub fn dup(&self, descriptor: usize) -> Self {
+        Self {
+            descriptor,
+            inner: self.inner.clone(),
+            links: RbLinks::new(),
+        }
+    }
+
     pub fn fork(&self) -> TaskFd {
-        match self {
-            TaskFd::File {
-                descriptor,
-                inode,
-                offset,
-            } => TaskFd::File {
-                descriptor: *descriptor,
-                inode: inode.clone(),
-                offset: AtomicUsize::new(offset.load(SeqCst)),
+        match &*self.inner {
+            TaskFdInner::File { inode, offset } => TaskFd {
+                descriptor: self.descriptor,
+                inner: Arc::new(TaskFdInner::File {
+                    inode: inode.clone(),
+                    offset: AtomicUsize::new(offset.load(SeqCst)),
+                }),
+                links: RbLinks::new(),
             },
         }
     }
 
     pub fn descriptor(&self) -> usize {
-        match self {
-            TaskFd::File {
-                descriptor,
-                inode: _,
-                offset: _,
-            } => *descriptor,
-        }
+        self.descriptor
     }
 
     pub fn read(&self, buf: &mut [u8]) -> isize {
-        match self {
-            TaskFd::File {
-                descriptor: _,
-                inode,
-                offset,
-            } => {
+        match &*self.inner {
+            TaskFdInner::File { inode, offset } => {
                 let local_offset = offset.load(SeqCst);
                 if let Ok(read) = Inode::read(inode, local_offset as u64, buf) {
                     offset.fetch_add(read, SeqCst);
@@ -776,12 +797,8 @@ impl TaskFd {
     }
 
     pub fn write(&self, buf: &[u8]) -> isize {
-        match self {
-            TaskFd::File {
-                descriptor: _,
-                inode,
-                offset,
-            } => {
+        match &*self.inner {
+            TaskFdInner::File { inode, offset } => {
                 let local_offset = offset.load(SeqCst);
                 if let Ok(()) = inode.write(local_offset as u64, buf) {
                     offset.fetch_add(buf.len(), SeqCst);

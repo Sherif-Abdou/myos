@@ -1,6 +1,6 @@
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR},
-    impl_link, printk,
+    impl_link,
     sched::Mutex,
     subsystem::FileSystem,
     utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
@@ -92,7 +92,11 @@ impl FileSystem for MountTable {
         Err(super::FsError::NoExist)
     }
 
-    fn create_with_ops(&self, path: &str, ops: Arc<dyn super::InodeOperations>) -> super::FsResult<Arc<Inode>> {
+    fn create_with_ops(
+        &self,
+        path: &str,
+        ops: Arc<dyn super::InodeOperations>,
+    ) -> super::FsResult<Arc<Inode>> {
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();
@@ -103,7 +107,6 @@ impl FileSystem for MountTable {
 
         Err(super::FsError::NoExist)
     }
-
 
     fn open(&self, path: &str) -> super::FsResult<Arc<Inode>> {
         for mount in self.mounts.lock().cursor() {

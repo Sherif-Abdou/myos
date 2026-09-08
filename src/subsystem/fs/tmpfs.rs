@@ -151,7 +151,6 @@ impl InodeOperations for InodeDirectory {
 
         Ok(())
     }
-
 }
 
 impl InodeDirectory {
