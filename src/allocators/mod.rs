@@ -47,7 +47,7 @@ pub fn kbox<T>(inner: T) -> KBox<T> {
     Box::new_in(inner, &KERNEL_ALLOCATOR)
 }
 
-pub fn kbox_with_len(len: usize) -> KBox<[u8]> {
+pub fn kbox_bytes(len: usize) -> KBox<[u8]> {
     unsafe {
         Box::from_raw_in(
             KERNEL_ALLOCATOR
@@ -56,6 +56,24 @@ pub fn kbox_with_len(len: usize) -> KBox<[u8]> {
                 .as_ptr(),
             &KERNEL_ALLOCATOR,
         )
+    }
+}
+
+pub fn kbox_with_len<T>(len: usize) -> KBox<[T]> {
+    unsafe {
+        let ptr = KERNEL_ALLOCATOR
+            .allocate(
+                Layout::from_size_align(
+                    len * core::mem::size_of::<T>(),
+                    8.max(core::mem::align_of::<T>()),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .as_ptr();
+
+        let ptr = core::ptr::slice_from_raw_parts_mut((*ptr).as_mut_ptr().cast(), len);
+        Box::from_raw_in(ptr, &KERNEL_ALLOCATOR)
     }
 }
 

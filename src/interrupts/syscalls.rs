@@ -1,13 +1,8 @@
 use core::str;
 
-use alloc::slice;
-
 use crate::{
-    allocators::{KBox, align_up, kbox_with_len},
-    interrupts::{
-        ExceptionRegisters, RETURN_TABLE, daifset,
-        sexc_handler::{copy_from_user, copy_to_user, user_strlen},
-    },
+    allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
+    interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
     sched::SCHEDULER,
     subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe},
     timer::us_sleep,
@@ -30,20 +25,27 @@ impl Syscall {
     }
 }
 
-fn validate_user_address_range(addr: usize, len: usize) -> bool {
-    (addr < 0x7fffffffff) && (addr + len < 0x7fffffffff)
+pub fn validate_user_address_range(addr: usize, len: usize) -> bool {
+    (addr < 0x7fffffffff) && (addr.saturating_add(len) < 0x7fffffffff)
 }
 
 pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] } as usize;
-    let addr = unsafe { (*regs).gprs[1] } as *mut u8;
+    let addr = unsafe { (*regs).gprs[1] } as usize;
     let len = unsafe { (*regs).gprs[2] } as usize;
 
-    let mut kernel_buf = kbox_with_len(len);
+    let user_buf = unsafe { UserInput::from_raw_parts(addr, len) };
+    let Ok(user_buf) = user_buf else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
 
-    let user_buf = unsafe { slice::from_raw_parts(addr, len) };
+        return regs;
+    };
 
-    let len = copy_from_user(&mut kernel_buf[..len], &user_buf[..len]);
+    let mut kernel_buf = kbox_bytes(user_buf.len());
+
+    let len = user_buf.copy_to_slice(&mut kernel_buf[..len]);
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
@@ -61,11 +63,18 @@ pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
 pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor = unsafe { (*regs).gprs[0] } as usize;
-    let addr = unsafe { (*regs).gprs[1] } as *mut u8;
+    let addr = unsafe { (*regs).gprs[1] } as usize;
     let len = unsafe { (*regs).gprs[2] } as usize;
-    let user_buf = unsafe { slice::from_raw_parts_mut(addr, len) };
+    let user_buf = unsafe { UserInput::from_raw_parts_mut(addr, len) };
+    let Ok(mut user_buf) = user_buf else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
 
-    let mut scratch = kbox_with_len(len);
+        return regs;
+    };
+
+    let mut scratch = kbox_bytes(len);
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
@@ -77,8 +86,7 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         }
     } else {
         let len = ret as usize;
-        let len = copy_to_user(&mut user_buf[..len], &scratch[..len]);
-
+        let len = user_buf.copy_from_slice(&scratch[..len]);
         unsafe {
             (*regs).gprs[0] = len as u64;
         }
@@ -87,17 +95,29 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+const MAX_STRING_LEN: usize = 2048;
+
 pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    let user_cstr_addr = unsafe { (*regs).gprs[0] } as *mut u8;
-    let user_cstr_len = user_strlen(user_cstr_addr.cast_const());
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
+    let user_cstr = unsafe { UserInput::from_cstr(user_cstr_addr, MAX_STRING_LEN) };
 
-    let mut scratch = kbox_with_len(user_cstr_len);
+    let Ok(user_cstr) = user_cstr else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
 
-    copy_from_user(&mut scratch, unsafe {
-        slice::from_raw_parts_mut(user_cstr_addr, user_cstr_len)
-    });
+    let mut scratch = kbox_bytes(user_cstr.len());
 
-    let path = str::from_utf8(&scratch).unwrap();
+    user_cstr.copy_to_slice(&mut scratch);
+
+    let Ok(path) = str::from_utf8(&scratch) else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
@@ -117,33 +137,35 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
-pub fn parse_argv(argc: u64, argv_addr: u64) -> KBox<[u8]> {
+pub fn parse_argv(argc: u64, argv: &[u64]) -> Result<KBox<[u8]>, ()> {
     // 4 bytes for argc
     let mut buffer_size = 8 + 8 * argc as usize;
 
-    let argv = argv_addr as *mut *mut u8;
     for i in 0..argc {
-        let local_argv = unsafe { argv.add(i as usize).read() };
-        let strlen = user_strlen(local_argv);
+        let local_argv = unsafe { UserInput::from_cstr(argv[i as usize] as usize, MAX_STRING_LEN) };
+        let Ok(strlen) = local_argv.map(|input| input.len()) else {
+            return Err(());
+        };
 
         buffer_size += strlen + 1;
     }
 
     // Ensure buffer is aligned to a size that can be placed on the stack.
-    let mut buffer = kbox_with_len(align_up(buffer_size, 16));
+    let mut buffer = kbox_bytes(align_up(buffer_size, 16));
     let mut index = 8 + 8 * argc as usize;
 
     buffer[0..8].copy_from_slice(&argc.to_le_bytes());
 
     for i in 0..argc {
-        let local_argv = unsafe { argv.add(i as usize).read() };
-        let strlen = user_strlen(local_argv);
-        let src = unsafe {
-            core::ptr::slice_from_raw_parts(local_argv, strlen)
-                .as_ref()
-                .unwrap()
+        let local_argv = unsafe { UserInput::from_cstr(argv[i as usize] as usize, MAX_STRING_LEN) };
+
+        let Ok(local_argv) = local_argv else {
+            return Err(());
         };
-        copy_from_user(&mut buffer[index..(index + strlen)], src);
+
+        let strlen = local_argv.len();
+        local_argv.copy_to_slice(&mut buffer[index..(index + strlen)]);
+
         buffer[index + strlen] = 0;
 
         buffer[8 * (i as usize + 1)..8 * (i as usize + 2)].copy_from_slice(&index.to_le_bytes());
@@ -151,20 +173,26 @@ pub fn parse_argv(argc: u64, argv_addr: u64) -> KBox<[u8]> {
         index += strlen + 1;
     }
 
-    buffer
+    Ok(buffer)
 }
 
 pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    let user_cstr_addr = unsafe { (*regs).gprs[0] } as *mut u8;
-    let user_cstr_len = user_strlen(user_cstr_addr.cast_const());
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
+    let user_cstr = unsafe { UserInput::from_cstr(user_cstr_addr, MAX_STRING_LEN) };
+
+    let Ok(user_cstr) = user_cstr else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
     let argc = unsafe { (*regs).gprs[1] };
     let argv_addr = unsafe { (*regs).gprs[2] };
 
-    let mut scratch = kbox_with_len(user_cstr_len);
+    let mut scratch = kbox_bytes(user_cstr.len());
 
-    copy_from_user(&mut scratch, unsafe {
-        slice::from_raw_parts_mut(user_cstr_addr, user_cstr_len)
-    });
+    user_cstr.copy_to_slice(&mut scratch);
 
     let path = str::from_utf8(&scratch).unwrap();
 
@@ -173,12 +201,32 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let inode = MOUNT_TABLE.get().unwrap().open(path);
 
     if let Ok(inode) = inode {
-        let mut scratch_argv = kbox_with_len(8 * argc as usize);
-        let _ = copy_from_user(&mut scratch_argv, unsafe {
-            core::slice::from_raw_parts(argv_addr as _, 8 * argc as usize)
-        });
+        let user_argv =
+            unsafe { UserInput::<&[u64]>::from_raw_parts(argv_addr as usize, argc as usize) };
+        let Ok(user_argv) = user_argv else {
+            unsafe {
+                (*regs).gprs[0] = -1i64 as u64;
+            }
+            return regs;
+        };
 
-        let args = parse_argv(argc, (*scratch_argv).as_ptr().addr() as u64);
+        let mut scratch_argv = kbox_with_len::<u64>(argc as usize);
+        let len_copied = user_argv.copy_to_slice(&mut scratch_argv);
+
+        if len_copied != argc as usize {
+            unsafe {
+                (*regs).gprs[0] = -1i64 as u64;
+            }
+            return regs;
+        }
+
+        let Ok(args) = parse_argv(argc, &scratch_argv) else {
+            unsafe {
+                (*regs).gprs[0] = -1i64 as u64;
+            }
+            return regs;
+        };
+
         let new_regs = task.exec(Arc::new(inode), &args);
         task.bind_pages();
 
@@ -292,9 +340,14 @@ pub fn fork(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 }
 
 pub fn pipe(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    let user_output = unsafe { (*regs).gprs[0] } as *mut u8;
+    let user_output = unsafe { UserInput::from_raw_parts_mut((*regs).gprs[0] as usize, 2) };
+    let Ok(mut user_output) = user_output else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
 
-    let mut scratch = [0u8; 8];
+        return regs;
+    };
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
@@ -303,13 +356,7 @@ pub fn pipe(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let descriptor1 = task.user_fd_table().unwrap().add_anon_file_fd(pipe.clone()) as u32;
     let descriptor2 = task.user_fd_table().unwrap().add_anon_file_fd(pipe.clone()) as u32;
 
-    scratch[..4].copy_from_slice(&descriptor1.to_le_bytes());
-    scratch[4..8].copy_from_slice(&descriptor2.to_le_bytes());
-
-    copy_to_user(
-        unsafe { slice::from_raw_parts_mut(user_output, 8) },
-        &scratch,
-    );
+    user_output.copy_from_slice(&[descriptor1, descriptor2]);
 
     unsafe {
         (*regs).gprs[0] = 0;
@@ -364,7 +411,13 @@ pub fn dispatch_syscall(regs: *mut ExceptionRegisters) -> *const ExceptionRegist
         .save_register_state_to_task(unsafe { regs.as_ref().unwrap() });
 
     let num = unsafe { (*regs).gprs[8] };
-    let call = &SYSCALL_TABLE[num as usize];
+    let Some(call) = SYSCALL_TABLE.get(num as usize) else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+
+        return regs;
+    };
 
     if let Some(func) = call.func {
         func(regs)

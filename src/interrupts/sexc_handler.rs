@@ -2,7 +2,10 @@ use core::arch::asm;
 
 use crate::{
     early_printk,
-    interrupts::{ExceptionRegisters, RETURN_TABLE, syscalls::dispatch_syscall},
+    interrupts::{
+        ExceptionRegisters, RETURN_TABLE,
+        syscalls::{dispatch_syscall, validate_user_address_range},
+    },
     per_cpu_lock, printk, read_sysreg,
     sched::SCHEDULER,
     subsystem::{PageFaultError, PageFaultType},
@@ -49,6 +52,86 @@ const fn create_sexc_table() -> SexcTable {
     base_table.0[0x24] = user_data_fault_handler;
 
     base_table
+}
+
+pub struct UserInput<T>(T);
+
+impl UserInput<&[u8]> {
+    pub unsafe fn from_cstr(user_address: usize, max_len: usize) -> Result<Self, ()> {
+        if !validate_user_address_range(user_address, 0) {
+            return Err(());
+        }
+
+        let len = user_strnlen(user_address as _, max_len);
+
+        if !validate_user_address_range(user_address, len * size_of::<u8>()) {
+            return Err(());
+        }
+
+        Ok(Self(unsafe {
+            core::slice::from_raw_parts(user_address as _, len)
+        }))
+    }
+}
+
+impl<T> UserInput<&[T]> {
+    pub unsafe fn from_raw_parts(user_address: usize, user_len: usize) -> Result<Self, ()> {
+        if !validate_user_address_range(user_address, user_len.saturating_mul(size_of::<T>())) {
+            return Err(());
+        }
+
+        Ok(Self(unsafe {
+            core::slice::from_raw_parts(user_address as _, user_len)
+        }))
+    }
+
+    /// Returns how many elements of type T were fully copied.
+    pub fn copy_to_slice(&self, dst: &mut [T]) -> usize {
+        let (_, src, _) = unsafe { self.0.align_to::<u8>() };
+        let (_, dst, _) = unsafe { dst.align_to_mut::<u8>() };
+
+        copy_from_user(dst, src) / core::mem::size_of::<T>()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<T> UserInput<&mut [T]> {
+    pub unsafe fn from_raw_parts_mut(user_address: usize, user_len: usize) -> Result<Self, ()> {
+        if !validate_user_address_range(user_address, user_len.saturating_mul(size_of::<T>())) {
+            return Err(());
+        }
+
+        Ok(Self(unsafe {
+            core::slice::from_raw_parts_mut(user_address as _, user_len)
+        }))
+    }
+
+    /// Returns how many elements of type T were fully copied.
+    pub fn copy_to_slice(&self, dst: &mut [T]) -> usize {
+        let (_, src, _) = unsafe { self.0.align_to::<u8>() };
+        let (_, dst, _) = unsafe { dst.align_to_mut::<u8>() };
+
+        copy_from_user(dst, src) / core::mem::size_of::<T>()
+    }
+
+    /// Returns how many elements of type T were fully copied.
+    pub fn copy_from_slice(&mut self, src: &[T]) -> usize {
+        let (_, src, _) = unsafe { src.align_to::<u8>() };
+        let (_, dst, _) = unsafe { self.0.align_to_mut::<u8>() };
+
+        copy_to_user(dst, src) / core::mem::size_of::<T>()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 pub fn copy_from_user(dst: &mut [u8], src: &[u8]) -> usize {
@@ -137,11 +220,11 @@ fn copy_to_user_inner(dst: &mut [u8], src: &[u8]) -> usize {
     len
 }
 
-fn user_strlen_inner(src: *const u8) -> usize {
+fn user_strnlen_inner(src: *const u8, max_len: usize) -> usize {
     let mut len = 0;
     let mut failed: u64 = 0;
 
-    loop {
+    while len < max_len {
         let byte: u8;
         let ptr = unsafe { src.byte_add(len) };
         unsafe {
@@ -165,14 +248,16 @@ fn user_strlen_inner(src: *const u8) -> usize {
             return len;
         }
     }
+
+    len
 }
 
-pub fn user_strlen(src: *const u8) -> usize {
+pub fn user_strnlen(src: *const u8, max_len: usize) -> usize {
     with_core_critical_section(|| {
         with_uaccess(|| {
             let old_func = SEXC_TABLE.set(0x25, user_data_access_handler);
 
-            let size = user_strlen_inner(src);
+            let size = user_strnlen_inner(src, max_len);
 
             let _ = SEXC_TABLE.set(0x25, old_func);
 
@@ -183,6 +268,7 @@ pub fn user_strlen(src: *const u8) -> usize {
 
 fn handle_data_access_fault(
     regs: *mut ExceptionRegisters,
+    ignore_el: bool,
 ) -> Result<*const ExceptionRegisters, PageFaultError> {
     let esr: u64;
     unsafe {
@@ -201,7 +287,7 @@ fn handle_data_access_fault(
     // Translation fault.
     let interrupted_user = unsafe { (*regs).spsr & 0b1111 } == 0;
     if (4..8).contains(&fsc)
-        && interrupted_user
+        && (interrupted_user || !ignore_el)
         && let Some(task) = SCHEDULER.get().unwrap().local_task()
         && task.is_user_task()
     {
@@ -214,7 +300,7 @@ fn handle_data_access_fault(
             Err(PageFaultError::Unhandled)
         }
     } else if (12..16).contains(&fsc)
-        && interrupted_user
+        && (interrupted_user || !ignore_el)
         && let Some(task) = SCHEDULER.get().unwrap().local_task()
         && task.is_user_task()
     {
@@ -232,7 +318,7 @@ fn handle_data_access_fault(
 }
 
 fn user_data_fault_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    if let Ok(regs) = handle_data_access_fault(regs) {
+    if let Ok(regs) = handle_data_access_fault(regs, true) {
         regs
     } else {
         default_sexc_handler(regs)
@@ -240,7 +326,7 @@ fn user_data_fault_handler(regs: *mut ExceptionRegisters) -> *const ExceptionReg
 }
 
 fn user_instruction_fault_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    if let Ok(regs) = handle_data_access_fault(regs) {
+    if let Ok(regs) = handle_data_access_fault(regs, true) {
         regs
     } else {
         default_sexc_handler(regs)
@@ -248,7 +334,7 @@ fn user_instruction_fault_handler(regs: *mut ExceptionRegisters) -> *const Excep
 }
 
 fn user_data_access_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
-    if let Ok(handled) = handle_data_access_fault(regs) {
+    if let Ok(handled) = handle_data_access_fault(regs, false) {
         return handled;
     }
 
@@ -261,7 +347,7 @@ fn user_data_access_handler(regs: *mut ExceptionRegisters) -> *const ExceptionRe
     let dfsc = iss & 0x3f;
 
     // Translation fault.
-    if (4..8).contains(&dfsc) {
+    if (4..8).contains(&dfsc) || (12..16).contains(&dfsc) {
         // We don't swap to disk yet, so cancel the copy
         unsafe { (*regs).gprs[0] = 0x1 }
         unsafe { (*regs).elr += 0x4 }

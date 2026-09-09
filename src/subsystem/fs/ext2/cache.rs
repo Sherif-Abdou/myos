@@ -186,8 +186,9 @@ impl Ext2InodeCache {
                 );
 
                 if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
-                    let block_number =
-                        (target_group * self.super_block.blocks_per_group as u64) as u32 + first_open;
+                    let block_number = (target_group * self.super_block.blocks_per_group as u64)
+                        as u32
+                        + first_open;
 
                     block_cache().write(
                         (current_bitmap_block * self.super_block.block_size()) as usize,
@@ -248,8 +249,10 @@ impl Ext2InodeCache {
                 );
 
                 if let Some(first_open) = scan_and_reserve_first_open(block_buffer.as_mut_slice()) {
-                    let inode_number =
-                        (target_group * self.super_block.inodes_per_group as u64) as u32 + first_open + 1;
+                    let inode_number = (target_group * self.super_block.inodes_per_group as u64)
+                        as u32
+                        + first_open
+                        + 1;
 
                     block_cache().write(
                         (current_bitmap_block * self.super_block.block_size()) as usize,
