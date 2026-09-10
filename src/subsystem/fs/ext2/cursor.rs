@@ -3,7 +3,7 @@ use alloc::slice;
 use crate::{
     allocators::align_up,
     subsystem::{
-        block_cache,
+        FsError, FsResult, block_cache,
         fs::ext2::{cache::Ext2InodeCache, inode::Ext2Meta, raw::LinkedDirectoryEntryHeader},
     },
 };
@@ -34,6 +34,10 @@ impl<'a> Ext2InodeCursor<'a> {
             l2_offsets: [0; 2],
             l3_offsets: [0; 3],
         }
+    }
+
+    pub fn meta(&self) -> &Ext2Meta {
+        self.inode
     }
 
     /// Jumps the cursor to the start of the blockth block.
@@ -152,6 +156,16 @@ impl<'a> Ext2InodeCursor<'a> {
         }
         have_read
     }
+
+    pub fn read_exact(&mut self, offset: u64, buf: &mut [u8]) -> FsResult<()> {
+        let len = self.read(offset, buf);
+
+        if len != buf.len() {
+            Err(FsError::EndOfFile)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 pub struct Ext2InodeWriteCursor<'a> {
@@ -169,6 +183,10 @@ impl<'a> Ext2InodeWriteCursor<'a> {
             inode_number,
             cache,
         }
+    }
+
+    pub fn meta(&self) -> &Ext2Meta {
+        self.inner.meta()
     }
 
     /// Jumps the cursor to the start of the blockth block.
@@ -395,7 +413,7 @@ impl<'a> Ext2InodeWriteCursor<'a> {
                     start_of_last_header as usize + current_name_len as usize + 8,
                     4,
                 ) as u64;
-                rec_len = (1024 - next_available_start) as u16;
+                rec_len = (1024 - (next_available_start % 4)) as u16;
 
                 let updated_prev_rec_len = (next_available_start - within_block_offset) as u16;
                 self.write(

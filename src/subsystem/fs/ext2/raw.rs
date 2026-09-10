@@ -1,3 +1,5 @@
+use core::sync::atomic::AtomicU32;
+
 #[repr(C)]
 pub struct SuperBlock {
     /// Total number of inodes, used + free, in the fs.
@@ -7,9 +9,9 @@ pub struct SuperBlock {
     /// Total number of blocks reserved for super user.
     pub(crate) r_blocks_count: u32,
     /// Total number of free blocks.
-    pub(crate) free_blocks_count: u32,
+    pub(crate) free_blocks_count: AtomicU32,
     /// Total number of free inodes.
-    pub(crate) free_inodes_count: u32,
+    pub(crate) free_inodes_count: AtomicU32,
     /// ID of the first datablock.
     pub(crate) first_data_block: u32,
     /// log2(max block size) - 10

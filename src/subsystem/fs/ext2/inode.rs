@@ -1,15 +1,19 @@
+use core::mem::MaybeUninit;
+
 use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FsError, FsResult, Inode, InodeOperations,
+        FsError, FsResult, Inode, InodeOperations, block,
         fs::ext2::{
             cache::Ext2InodeCache,
             cursor::{Ext2InodeCursor, Ext2InodeWriteCursor},
             raw::{Ext2Inode, LinkedDirectoryEntryHeader, SuperBlock},
         },
     },
-    utils::{Arc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
+    utils::{
+        Arc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc, copy_to_uninit, uninit_as_mut_slice,
+    },
 };
 
 pub struct Ext2Meta {
@@ -80,46 +84,63 @@ impl InodeOperations for Ext2InodeWrapper {
 
         let _lock = self.io_lock.lock();
 
+        let file_size = *self.ext2_inode.size.lock() as u64;
+        let mut file_offset = 0;
+        let mut block_offset = 0;
+
+        let mut dentry_header: MaybeUninit<LinkedDirectoryEntryHeader> = MaybeUninit::uninit();
+
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
-
-        let mut offset = 0;
-        let mut inner_offset = 0;
-        let mut dentry_header = [0u8; 8];
-
+        // TOOD: Support full length file names.
         let mut name_buffer = [0u8; 32];
 
-        cursor.jump_to(0);
-        while cursor.get_current_block() != 0 {
-            while inner_offset < self.super_block.block_size() {
-                let _ = cursor.read(offset, &mut dentry_header);
-                let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
-                let inode_number = unsafe { (*overlay).inode };
-                if inode_number != 0 {
-                    let name_len = (unsafe { (*overlay).name_len } as usize).min(32);
+        let mut active_block = cursor.get_current_block();
+        while active_block != 0 && file_offset < file_size {
+            while block_offset < 1024 && file_offset < file_size {
+                let mut dentry_buffer = [0u8; core::mem::size_of::<LinkedDirectoryEntryHeader>()];
 
-                    cursor.read(offset + 8, &mut name_buffer[..name_len]);
+                cursor.read_exact(file_offset, &mut dentry_buffer)?;
 
-                    let name = str::from_utf8(&name_buffer[..name_len]).unwrap();
+                copy_to_uninit(&mut dentry_header, &dentry_buffer);
 
-                    let child = self.inode_cache.lookup_or_create(inode_number)?;
+                let dentry_header = unsafe { dentry_header.assume_init_ref() };
 
-                    let file_size = *child.ext2_inode.size.lock() as u64;
-
-                    let fs_inode = Arc::new(Inode::new(child));
-
-                    fs_inode.meta().file_size = file_size;
-
-                    fs_inode.meta().set_name(name);
-
-                    list.push_back(UniqueArc::new(ListLinkWrapper::new(fs_inode)).into());
+                if dentry_header.rec_len <= 8
+                    || !dentry_header.rec_len.is_multiple_of(4)
+                    || block_offset + dentry_header.rec_len as usize > 1024
+                    || dentry_header.name_len as u16 > dentry_header.rec_len - 8
+                {
+                    return Err(FsError::BadMeta);
                 }
-                let rec_len = unsafe { (*overlay).rec_len as u64 };
-                offset += rec_len;
-                inner_offset += rec_len;
+
+                let inode_number = dentry_header.inode;
+
+                if inode_number != 0 {
+                    let ext2_inode = self.inode_cache.lookup_or_create(inode_number)?;
+
+                    let ext2_file_size = *ext2_inode.ext2_inode.size.lock();
+
+                    let inode = Arc::new(Inode::new(ext2_inode));
+
+                    let name_len = (dentry_header.name_len as usize).min(name_buffer.len());
+
+                    cursor.read_exact(file_offset + 8, &mut name_buffer[..name_len])?;
+
+                    inode.meta().set_name(
+                        str::from_utf8(&name_buffer[..name_len]).map_err(|_| FsError::BadMeta)?,
+                    );
+                    inode.meta().file_size = ext2_file_size as u64;
+
+                    list.push_back(UniqueArc::new(ListLinkWrapper::new(inode)).into());
+                }
+
+                file_offset += dentry_header.rec_len as u64;
+                block_offset += dentry_header.rec_len as usize;
             }
 
             cursor.next_block();
-            inner_offset = 0;
+            active_block = cursor.get_current_block();
+            block_offset = 0;
         }
 
         Ok(())
@@ -130,6 +151,9 @@ impl InodeOperations for Ext2InodeWrapper {
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
 
         let new_inode_number = self.inode_cache.allocate_inode_number();
+        if new_inode_number == 0 {
+            return Err(FsError::NoSpace);
+        }
 
         let inode = Ext2Inode {
             mode: (0x8 << 12) | (0o777),
@@ -164,6 +188,9 @@ impl InodeOperations for Ext2InodeWrapper {
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
 
         let new_inode_number = self.inode_cache.allocate_inode_number();
+        if new_inode_number == 0 {
+            return Err(FsError::NoSpace);
+        }
 
         let inode = Ext2Inode {
             mode: (0x4 << 12) | (0o666),
@@ -174,7 +201,7 @@ impl InodeOperations for Ext2InodeWrapper {
             mtime: 0,
             dtime: 0,
             gid: 0,
-            links_count: 3,
+            links_count: 2,
             blocks: 2,
             flags: 0,
             osd1: 0,
@@ -197,6 +224,12 @@ impl InodeOperations for Ext2InodeWrapper {
 
         write_cursor.append_dentry(new_inode_number, ".");
         write_cursor.append_dentry(self.number, "..");
+
+        *write_cursor.meta().links_count.lock() += 1;
+
+        self.inode_cache.modify_node(self.number, |inode| {
+            inode.links_count += 1;
+        });
 
         Ok(())
     }

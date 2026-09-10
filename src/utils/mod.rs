@@ -5,6 +5,7 @@ mod cpu_local;
 mod deque;
 mod intrusive_list;
 mod intrusive_rbtree;
+mod mem;
 mod mmio;
 mod spin_lock;
 mod string;
@@ -18,6 +19,7 @@ pub use intrusive_list::*;
 pub use intrusive_rbtree::*;
 pub use mmio::Mmio;
 pub use spin_lock::*;
+pub use mem::*;
 pub use string::*;
 
 pub const MAX_CPUS: usize = 8;

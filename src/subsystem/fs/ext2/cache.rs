@@ -195,6 +195,7 @@ impl Ext2InodeCache {
                         &block_buffer[..],
                     );
 
+                    self.super_block.free_blocks_count.fetch_sub(1, SeqCst);
                     return block_number + self.super_block.first_data_block;
                 }
             }
@@ -258,6 +259,8 @@ impl Ext2InodeCache {
                         (current_bitmap_block * self.super_block.block_size()) as usize,
                         &block_buffer[..],
                     );
+
+                    self.super_block.free_inodes_count.fetch_sub(1, SeqCst);
 
                     return inode_number;
                 }

@@ -12,8 +12,16 @@ const PERMISSION_EXECUTE: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsError {
+    /// Operation is not supported.
     Unsupported,
+    /// Desired target does not exist.
     NoExist,
+    /// No space for the desired resource on the device.
+    NoSpace,
+    /// Bad metadata for the device being read.
+    BadMeta,
+    /// Nothing more to read.
+    EndOfFile,
 }
 
 pub type FsResult<T> = Result<T, FsError>;
