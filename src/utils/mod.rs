@@ -17,9 +17,9 @@ pub use cpu_local::*;
 pub use deque::Deque;
 pub use intrusive_list::*;
 pub use intrusive_rbtree::*;
+pub use mem::*;
 pub use mmio::Mmio;
 pub use spin_lock::*;
-pub use mem::*;
 pub use string::*;
 
 pub const MAX_CPUS: usize = 8;

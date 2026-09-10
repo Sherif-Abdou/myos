@@ -275,7 +275,7 @@ impl Sched {
             let mut scheduled = self.scheduled.local().lock();
 
             idle.as_ref().unwrap().mark_running();
-            if let Some(ref scheduled) = *scheduled 
+            if let Some(ref scheduled) = *scheduled
                 && !scheduled.is_done()
                 && !scheduled.is_blocked()
             {

@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::{arch::asm, slice::SliceIndex};
 
 use crate::{
     early_printk,
@@ -95,6 +95,33 @@ impl<T> UserInput<&[T]> {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+}
+
+impl<T> UserInput<&[T]> {
+    pub fn index<I>(&self, index: I) -> UserInput<&'_ [T]>
+    where
+        I: SliceIndex<[T], Output = [T]>,
+    {
+        UserInput(&self.0[index])
+    }
+}
+
+impl<T> UserInput<&mut [T]> {
+    pub fn index<I>(&self, index: I) -> UserInput<&[T]>
+    where
+        I: SliceIndex<[T], Output = [T]>,
+    {
+        UserInput(&self.0[index])
+    }
+}
+
+impl<T> UserInput<&mut [T]> {
+    pub fn index_mut<I>(&'_ mut self, index: I) -> UserInput<&'_ mut [T]>
+    where
+        I: SliceIndex<[T], Output = [T]>,
+    {
+        UserInput(&mut self.0[index])
     }
 }
 

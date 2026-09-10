@@ -383,6 +383,67 @@ pub fn sbrk(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn getdents(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let fd = unsafe { (*regs).gprs[0] };
+    let user_dentry_ptr = unsafe { (*regs).gprs[1] };
+    let user_dentry_len = unsafe { (*regs).gprs[2] };
+
+    let user_dentry_buffer = unsafe {
+        UserInput::<&mut [u8]>::from_raw_parts_mut(
+            user_dentry_ptr as usize,
+            user_dentry_len as usize,
+        )
+    };
+    let Ok(mut user_dentry_buffer) = user_dentry_buffer else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    let Some(inode) = task.user_fd_table().unwrap().find_inode(fd as usize) else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
+    let Ok(bytes_written) = inode.list_directory(|list| {
+        let mut bytes_written = 0;
+        for dentry in list.cursor() {
+            let name_len = dentry.name().len();
+
+            let user_dentry_buffer_len = user_dentry_buffer.len();
+            if bytes_written + name_len + 1 > user_dentry_buffer_len {
+                break;
+            }
+
+            // TODO: Report EFAULT if copy not fully successful.
+            user_dentry_buffer
+                .index_mut(bytes_written..(bytes_written + name_len))
+                .copy_from_slice(dentry.name().as_bytes());
+            user_dentry_buffer
+                .index_mut(bytes_written + name_len..bytes_written + name_len + 1)
+                .copy_from_slice(&[0]);
+
+            bytes_written += name_len + 1;
+        }
+        bytes_written
+    }) else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
+    unsafe {
+        (*regs).gprs[0] = bytes_written as u64;
+    }
+
+    regs
+}
+
 const fn build_syscall_table() -> [Syscall; 100] {
     let mut table = [const { Syscall::empty() }; 100];
 
@@ -394,6 +455,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[17] = Syscall::new(nanosleep);
     table[20] = Syscall::new(fork);
     table[22] = Syscall::new(exec);
+    table[24] = Syscall::new(getdents);
     table[27] = Syscall::new(waitpid);
     table[33] = Syscall::new(sbrk);
     table[40] = Syscall::new(pipe);

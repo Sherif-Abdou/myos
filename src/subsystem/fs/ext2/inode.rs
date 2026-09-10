@@ -11,9 +11,7 @@ use crate::{
             raw::{Ext2Inode, LinkedDirectoryEntryHeader, SuperBlock},
         },
     },
-    utils::{
-        Arc, KString, ListLinks, SpinLock, UniqueArc, copy_to_uninit,
-    },
+    utils::{Arc, KString, ListLinks, SpinLock, UniqueArc, copy_to_uninit},
 };
 
 pub struct Ext2Meta {

@@ -679,6 +679,13 @@ impl TaskFdTable {
         }
     }
 
+    pub fn find_inode(&self, descriptor: usize) -> Option<Arc<Inode>> {
+        self.fds
+            .lock()
+            .find(descriptor)
+            .and_then(|fd| fd.inode().cloned())
+    }
+
     pub fn add_file_fd(&self, inode: Arc<Inode>) -> usize {
         let mut fds = self.fds.lock();
         let descriptor = self.next_fd_number.fetch_add(1, SeqCst);
@@ -789,6 +796,13 @@ enum TaskFdInner {
 }
 
 impl TaskFd {
+    pub fn inode(&self) -> Option<&Arc<Inode>> {
+        match &*self.inner {
+            TaskFdInner::File { inode, offset: _ } => Some(inode),
+            _ => None,
+        }
+    }
+
     pub fn dup(&self, descriptor: usize) -> Self {
         Self {
             descriptor,
