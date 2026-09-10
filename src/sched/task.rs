@@ -8,8 +8,7 @@ use crate::{
     memory::{PAGE_SIZE, Pfn},
     sched::{
         LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
-        lazy_buffer::{LazyPageBuffer, LazyPageUninitSource},
-        restore_regs_and_eret,
+        lazy_buffer::LazyPageBuffer, restore_regs_and_eret,
     },
     subsystem::{
         AnonPageMeta, ArmPageTableRoot, Inode, InodeOperations, PageFaultError, PageFaultType,
@@ -356,6 +355,16 @@ impl Task {
 
     pub fn is_done(&self) -> bool {
         matches!(*self.state.lock(), TaskState::Done(_))
+    }
+
+    pub fn is_blocked(&self) -> bool {
+        matches!(*self.state.lock(), TaskState::Blocked)
+    }
+
+    pub fn with_state_locked<R, F: FnOnce(&mut TaskState) -> R>(&self, func: F) -> R {
+        let mut state = self.state.lock();
+
+        func(&mut state)
     }
 
     pub fn mark_runnable(&self) {

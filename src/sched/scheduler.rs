@@ -3,7 +3,7 @@ use core::arch::{asm, naked_asm};
 use crate::{
     cpu_local,
     interrupts::{ExceptionRegisters, daifclr, daifset},
-    sched::Task,
+    sched::{Task, TaskState},
     timer::ms_sleep,
     utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
 };
@@ -183,9 +183,19 @@ impl Sched {
         let mut run_queue = self.run_queue.lock();
         let task = unsafe { self.blocked_queue.lock().remove_at_unchecked(task) };
 
-        task.mark_runnable();
+        // Don't do anything if we're unblocking a running task.
+        let add_to_run_queue = task.with_state_locked(|state| match state {
+            TaskState::Running => false,
+            TaskState::Blocked => {
+                *state = TaskState::Runnable;
+                true
+            }
+            _ => panic!("Unexpected state."),
+        });
 
-        run_queue.push_back(task);
+        if add_to_run_queue {
+            run_queue.push_back(task);
+        }
     }
 
     pub fn end_task(&self, code: i32) {
@@ -243,6 +253,7 @@ impl Sched {
             let mut scheduled = self.scheduled.local().lock();
             if let Some(ref scheduled) = *scheduled
                 && !scheduled.is_done()
+                && !scheduled.is_blocked()
             {
                 scheduled.mark_runnable();
             }
@@ -264,7 +275,10 @@ impl Sched {
             let mut scheduled = self.scheduled.local().lock();
 
             idle.as_ref().unwrap().mark_running();
-            if let Some(ref scheduled) = *scheduled {
+            if let Some(ref scheduled) = *scheduled 
+                && !scheduled.is_done()
+                && !scheduled.is_blocked()
+            {
                 scheduled.mark_runnable();
             }
 
