@@ -10,15 +10,13 @@ use crate::{
             raw::{Ext2Inode, SuperBlock},
         },
     },
-    utils::{Arc, OnceSpinLock, UniqueArc},
+    utils::{Arc, UniqueArc},
 };
 
 mod cache;
 mod cursor;
 mod inode;
 mod raw;
-
-pub static EXT2_FS: OnceSpinLock<Ext2Fs> = OnceSpinLock::new();
 
 pub struct Ext2Fs {
     super_block: Arc<SuperBlock>,
@@ -89,10 +87,7 @@ impl FileSystem for Ext2Fs {
 
             let potential_child = current.list_directory(|list| {
                 let mut cursor = list.cursor();
-                while cursor
-                    .get()
-                    .is_some_and(|child| child.meta().name() != part)
-                {
+                while cursor.get().is_some_and(|child| child.name() != part) {
                     let _ = cursor.next();
                 }
 
@@ -100,7 +95,7 @@ impl FileSystem for Ext2Fs {
             })?;
 
             let child = potential_child.ok_or(FsError::NoExist)?;
-            current = (*child).clone();
+            current = child.inode().clone();
         }
 
         let child_to_create = path.split('/').nth(num_parts).unwrap();
@@ -110,14 +105,14 @@ impl FileSystem for Ext2Fs {
             let mut cursor = list.cursor();
             while cursor
                 .get()
-                .is_some_and(|child| child.meta().name() != child_to_create)
+                .is_some_and(|child| child.name() != child_to_create)
             {
                 let _ = cursor.next();
             }
 
             cursor
                 .get_arc()
-                .map(|wrapper| (*wrapper).clone())
+                .map(|wrapper| wrapper.inode().clone())
                 .ok_or(FsError::NoExist)
         })?
     }
@@ -133,10 +128,7 @@ impl FileSystem for Ext2Fs {
 
             let potential_child = current.list_directory(|list| {
                 let mut cursor = list.cursor();
-                while cursor
-                    .get()
-                    .is_some_and(|child| child.meta().name() != part)
-                {
+                while cursor.get().is_some_and(|child| child.name() != part) {
                     let _ = cursor.next();
                 }
 
@@ -144,7 +136,7 @@ impl FileSystem for Ext2Fs {
             })?;
 
             let child = potential_child.ok_or(FsError::NoExist)?;
-            current = (*child).clone();
+            current = child.inode().clone();
         }
         Ok(current)
     }

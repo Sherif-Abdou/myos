@@ -4,7 +4,7 @@ use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FsError, FsResult, Inode, InodeOperations, block,
+        FsError, FsResult, Inode, InodeDirectoryEntry, InodeOperations,
         fs::ext2::{
             cache::Ext2InodeCache,
             cursor::{Ext2InodeCursor, Ext2InodeWriteCursor},
@@ -12,7 +12,7 @@ use crate::{
         },
     },
     utils::{
-        Arc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc, copy_to_uninit, uninit_as_mut_slice,
+        Arc, KString, ListLinks, SpinLock, UniqueArc, copy_to_uninit,
     },
 };
 
@@ -74,10 +74,7 @@ impl InodeOperations for Ext2InodeWrapper {
         Ok(written)
     }
 
-    fn list_directory(
-        &self,
-        list: &mut crate::utils::List<crate::utils::ListLinkWrapper<Arc<Inode>>>,
-    ) -> FsResult<()> {
+    fn list_directory(&self, list: &mut crate::utils::List<InodeDirectoryEntry>) -> FsResult<()> {
         if !self.ext2_inode.is_directory() {
             return Err(FsError::Unsupported);
         }
@@ -92,7 +89,7 @@ impl InodeOperations for Ext2InodeWrapper {
 
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
         // TOOD: Support full length file names.
-        let mut name_buffer = [0u8; 32];
+        let mut name_buffer = [0u8; 256];
 
         let mut active_block = cursor.get_current_block();
         while active_block != 0 && file_offset < file_size {
@@ -126,12 +123,12 @@ impl InodeOperations for Ext2InodeWrapper {
 
                     cursor.read_exact(file_offset + 8, &mut name_buffer[..name_len])?;
 
-                    inode.meta().set_name(
-                        str::from_utf8(&name_buffer[..name_len]).map_err(|_| FsError::BadMeta)?,
-                    );
+                    let mut name = KString::new();
+                    name.extend_from_slice(&name_buffer[..name_len]);
+
                     inode.meta().file_size = ext2_file_size as u64;
 
-                    list.push_back(UniqueArc::new(ListLinkWrapper::new(inode)).into());
+                    list.push_back(UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into());
                 }
 
                 file_offset += dentry_header.rec_len as u64;

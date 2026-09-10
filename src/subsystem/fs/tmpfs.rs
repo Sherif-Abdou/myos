@@ -2,10 +2,10 @@ use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FileSystem, FsResult,
+        FileSystem, FsResult, InodeDirectoryEntry,
         fs::{Inode, InodeOperations},
     },
-    utils::{Arc, List, ListArc, ListLinkWrapper, ListLinks, SpinLock, UniqueArc},
+    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 use super::FsError;
@@ -111,16 +111,16 @@ impl InodeOperations for Mutex<InodeFile> {
 }
 
 pub struct InodeDirectory {
-    children: Mutex<List<Inode>>,
+    children: Mutex<List<InodeDirectoryEntry>>,
 }
 
 impl InodeOperations for InodeDirectory {
-    fn list_directory(&self, list: &mut List<ListLinkWrapper<Arc<Inode>>>) -> super::FsResult<()> {
+    fn list_directory(&self, list: &mut List<InodeDirectoryEntry>) -> super::FsResult<()> {
         let mut children = self.children.lock();
         let mut cursor = children.cursor_mut();
 
         while let Some(inode) = cursor.get_arc() {
-            let listarc: ListLinkWrapper<Arc<Inode>, 0> = ListLinkWrapper::new(inode.clone());
+            let listarc = (*inode).clone();
             let wrapped: ListArc<_, 0> = UniqueArc::new(listarc).into();
             list.push_back(wrapped);
 
@@ -133,9 +133,10 @@ impl InodeOperations for InodeDirectory {
         let file = InodeFile {
             blocks: List::new(),
         };
-        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(Arc::new(Mutex::new(file)))).into();
+        let inode = Arc::new(Inode::new(Arc::new(Mutex::new(file))));
 
-        node.meta().set_name(name);
+        let node: ListArc<InodeDirectoryEntry, 0> =
+            UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into();
 
         self.children.lock().push_back(node);
 
@@ -143,9 +144,9 @@ impl InodeOperations for InodeDirectory {
     }
 
     fn create_file_with_ops(&self, name: &str, ops: Arc<dyn InodeOperations>) -> FsResult<()> {
-        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(ops)).into();
-
-        node.meta().set_name(name);
+        let inode = Arc::new(Inode::new(ops));
+        let node: ListArc<InodeDirectoryEntry, 0> =
+            UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into();
 
         self.children.lock().push_back(node);
 
@@ -159,7 +160,7 @@ impl InodeDirectory {
         let mut cursor = children.cursor_mut();
 
         while let Some(file) = cursor.get_arc() {
-            if file.meta().name() == name {
+            if file.name() == name {
                 cursor.remove();
             } else {
                 let _ = cursor.next();
@@ -171,9 +172,9 @@ impl InodeDirectory {
         let directory = InodeDirectory {
             children: Mutex::new(List::new()),
         };
-        let node: ListArc<Inode, 0> = UniqueArc::new(Inode::new(Arc::new(directory))).into();
-
-        node.meta().set_name(name);
+        let inode = Arc::new(Inode::new(Arc::new(directory)));
+        let node: ListArc<InodeDirectoryEntry, 0> =
+            UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into();
 
         self.children.lock().push_back(node);
     }
@@ -194,7 +195,6 @@ impl TmpFs {
             children: Mutex::new(List::new()),
         });
         let root = Inode::new(root);
-        root.meta().set_name("");
 
         Self {
             root: Arc::new(root),
@@ -218,10 +218,7 @@ impl FileSystem for TmpFs {
 
             let potential_child = current.list_directory(|list| {
                 let mut cursor = list.cursor();
-                while cursor
-                    .get()
-                    .is_some_and(|child| child.meta().name() != part)
-                {
+                while cursor.get().is_some_and(|child| child.name() != part) {
                     let _ = cursor.next();
                 }
 
@@ -229,7 +226,7 @@ impl FileSystem for TmpFs {
             })?;
 
             let child = potential_child.ok_or(FsError::NoExist)?;
-            current = (*child).clone();
+            current = child.inode().clone();
         }
         Ok(current)
     }
@@ -246,10 +243,7 @@ impl FileSystem for TmpFs {
 
             let potential_child = current.list_directory(|list| {
                 let mut cursor = list.cursor();
-                while cursor
-                    .get()
-                    .is_some_and(|child| child.meta().name() != part)
-                {
+                while cursor.get().is_some_and(|child| child.name() != part) {
                     let _ = cursor.next();
                 }
 
@@ -257,7 +251,7 @@ impl FileSystem for TmpFs {
             })?;
 
             let child = potential_child.ok_or(FsError::NoExist)?;
-            current = (*child).clone();
+            current = child.inode().clone();
         }
 
         let child_to_create = path.split('/').nth(num_parts).unwrap();
@@ -267,14 +261,14 @@ impl FileSystem for TmpFs {
             let mut cursor = list.cursor();
             while cursor
                 .get()
-                .is_some_and(|child| child.meta().name() != child_to_create)
+                .is_some_and(|child| child.name() != child_to_create)
             {
                 let _ = cursor.next();
             }
 
             cursor
                 .get_arc()
-                .map(|wrapper| (*wrapper).clone())
+                .map(|wrapper| wrapper.inode().clone())
                 .ok_or(FsError::NoExist)
         })?
     }
@@ -291,10 +285,7 @@ impl FileSystem for TmpFs {
 
             let potential_child = current.list_directory(|list| {
                 let mut cursor = list.cursor();
-                while cursor
-                    .get()
-                    .is_some_and(|child| child.meta().name() != part)
-                {
+                while cursor.get().is_some_and(|child| child.name() != part) {
                     let _ = cursor.next();
                 }
 
@@ -302,7 +293,7 @@ impl FileSystem for TmpFs {
             })?;
 
             let child = potential_child.ok_or(FsError::NoExist)?;
-            current = (*child).clone();
+            current = child.inode().clone();
         }
 
         let child_to_create = path.split('/').nth(num_parts).unwrap();
@@ -312,14 +303,14 @@ impl FileSystem for TmpFs {
             let mut cursor = list.cursor();
             while cursor
                 .get()
-                .is_some_and(|child| child.meta().name() != child_to_create)
+                .is_some_and(|child| child.name() != child_to_create)
             {
                 let _ = cursor.next();
             }
 
             cursor
                 .get_arc()
-                .map(|wrapper| (*wrapper).clone())
+                .map(|wrapper| wrapper.inode().clone())
                 .ok_or(FsError::NoExist)
         })?
     }

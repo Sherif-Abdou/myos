@@ -1,9 +1,7 @@
-use core::ffi::CStr;
-
 use crate::{
     impl_link,
     sched::{Mutex, MutexGuard},
-    utils::{Arc, ArcAny, List, ListLinkWrapper, ListLinks, SpinLock, SpinLockGuard},
+    utils::{Arc, ArcAny, KString, List, ListLinks, SpinLock, SpinLockGuard},
 };
 
 const PERMISSION_READ: u8 = 4;
@@ -41,7 +39,7 @@ pub trait InodeOperations: Send + Sync + 'static {
         Err(FsError::Unsupported)
     }
 
-    fn list_directory(&self, list: &mut List<ListLinkWrapper<Arc<Inode>>>) -> FsResult<()> {
+    fn list_directory(&self, list: &mut List<InodeDirectoryEntry>) -> FsResult<()> {
         let _ = list;
 
         Err(FsError::Unsupported)
@@ -68,8 +66,6 @@ pub trait InodeOperations: Send + Sync + 'static {
 }
 
 pub struct InodeMeta {
-    /// Name of the Inode
-    pub name_buf: [u8; 32],
     /// Unique identifier for the Inode.
     pub uid: u64,
     /// RWX Permissions for the Inode
@@ -80,30 +76,52 @@ pub struct InodeMeta {
     driver_data: Option<ArcAny>,
 }
 
-impl InodeMeta {
-    pub fn name(&self) -> &str {
-        CStr::from_bytes_until_nul(&self.name_buf)
-            .unwrap()
-            .to_str()
-            .unwrap()
-    }
-
-    pub fn set_name(&mut self, name: &str) {
-        self.name_buf[..name.len().min(32)].copy_from_slice(name.as_bytes());
-    }
-}
-
 pub struct Inode {
     meta: SpinLock<InodeMeta>,
     operations: Mutex<Arc<dyn InodeOperations>>,
     pub links: ListLinks,
 }
 
+pub struct InodeDirectoryEntry {
+    name: KString,
+    inode: Arc<Inode>,
+    links: ListLinks,
+}
+
+impl Clone for InodeDirectoryEntry {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            inode: self.inode.clone(),
+            links: ListLinks::new(),
+        }
+    }
+}
+
+impl_link!(InodeDirectoryEntry, 0 => links);
+
+impl InodeDirectoryEntry {
+    pub fn new(name: impl AsRef<str>, inode: Arc<Inode>) -> Self {
+        Self {
+            name: KString::from_str(name.as_ref()),
+            inode,
+            links: ListLinks::new(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    pub fn inode(&self) -> &Arc<Inode> {
+        &self.inode
+    }
+}
+
 impl Inode {
     pub fn new(operations: Arc<dyn InodeOperations>) -> Self {
         Self {
             meta: SpinLock::new(InodeMeta {
-                name_buf: [0u8; 32],
                 uid: 0,
                 permissions: PERMISSION_READ | PERMISSION_WRITE,
                 file_size: 0,
@@ -132,7 +150,7 @@ impl Inode {
         self.contents().write(offset, buffer)
     }
 
-    pub fn list_directory<R, F: FnOnce(&List<ListLinkWrapper<Arc<Inode>>>) -> R>(
+    pub fn list_directory<R, F: FnOnce(&List<InodeDirectoryEntry>) -> R>(
         &self,
         func: F,
     ) -> FsResult<R> {

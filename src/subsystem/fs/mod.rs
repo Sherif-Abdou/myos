@@ -3,9 +3,9 @@ mod inode;
 mod mounts;
 mod tmpfs;
 
-use crate::utils::{Arc, List, ListLinkWrapper};
+use crate::utils::{Arc, List};
 
-pub use ext2::{EXT2_FS, Ext2Fs};
+pub use ext2::Ext2Fs;
 pub use inode::*;
 pub use mounts::*;
 pub use tmpfs::TmpFs;
@@ -30,10 +30,7 @@ pub trait FileSystem {
         Err(FsError::Unsupported)
     }
 
-    fn list_directory<R, F: FnOnce(&List<ListLinkWrapper<Arc<Inode>>>) -> R>(
-        &self,
-        func: F,
-    ) -> FsResult<R>
+    fn list_directory<R, F: FnOnce(&List<InodeDirectoryEntry>) -> R>(&self, func: F) -> FsResult<R>
     where
         Self: Sized,
     {

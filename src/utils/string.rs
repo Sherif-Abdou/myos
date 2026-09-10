@@ -48,6 +48,14 @@ impl KString {
         self.buf.push(value);
     }
 
+    pub fn extend_from_string(&mut self, string: &str) {
+        self.buf.extend_from_slice(string.as_bytes());
+    }
+
+    pub fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
     pub fn len(&self) -> usize {
         self.buf.len()
     }
@@ -58,6 +66,17 @@ impl KString {
 
     pub fn chars(&self) -> Chars<'_> {
         self.as_str().chars()
+    }
+
+    pub fn set_from_str(&mut self, string: &str) {
+        if string.len() > self.buf.capacity() {
+            self.buf.reserve(string.len() - self.buf.len());
+        } else {
+            self.buf.truncate(string.len());
+        }
+
+        unsafe { self.buf.set_len(string.len()) };
+        self.buf.copy_from_slice(string.as_bytes());
     }
 }
 

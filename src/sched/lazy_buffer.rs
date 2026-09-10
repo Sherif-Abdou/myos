@@ -1,5 +1,5 @@
 use crate::{
-    memory::{PAGE_ALLOCATOR, PAGE_SIZE, copy_pfn, page_from_pfn},
+    memory::{PAGE_ALLOCATOR, PAGE_SIZE, page_from_pfn},
     printk,
     sched::cpu_current_task,
     subsystem::{AnonPageMeta, ArmPageTableRoot, PageFaultError, PageFaultType, VmaAllocatedArea},

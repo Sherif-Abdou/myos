@@ -2,7 +2,6 @@ use crate::{
     allocators::KBox,
     elf::raw::{ElfHeader, ProgramHeader, SectionHeader},
     memory::PAGE_SIZE,
-    printk,
     sched::LazyPageBufferSource,
     subsystem::Inode,
     utils::Arc,
