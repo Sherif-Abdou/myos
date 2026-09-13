@@ -45,7 +45,17 @@ pub trait FileSystem {
         Err(FsError::Unsupported)
     }
 
+    fn remove(&self, path: &str, flags: RemovalType) -> FsResult<()> {
+        Err(FsError::Unsupported)
+    }
+
     fn create_with_ops(&self, path: &str, ops: Arc<dyn InodeOperations>) -> FsResult<Arc<Inode>> {
         Err(FsError::Unsupported)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemovalType {
+    File,
+    Directory,
 }

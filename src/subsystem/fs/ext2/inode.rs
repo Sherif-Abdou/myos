@@ -121,6 +121,9 @@ impl Drop for Ext2InodeWrapper {
                 });
                 self.inode_cache.free_data_block(triple_linked_block);
             }
+
+            self.inode_cache.remove_inode(self.number);
+            self.inode_cache.free_inode(self.number);
         }
     }
 }
@@ -308,6 +311,10 @@ impl InodeOperations for Ext2InodeWrapper {
     fn remove_file(&self, name: &str) -> FsResult<()> {
         let _io_lock = self.io_lock.lock();
 
+        if self.ext2_inode.is_directory() {
+            return Err(FsError::InvalidArgument);
+        }
+
         let mut cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
 
@@ -348,6 +355,10 @@ impl InodeOperations for Ext2InodeWrapper {
 
     fn remove_directory(&self, name: &str) -> FsResult<()> {
         let _io_lock = self.io_lock.lock();
+
+        if !self.ext2_inode.is_directory() {
+            return Err(FsError::InvalidArgument);
+        }
 
         let mut cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);

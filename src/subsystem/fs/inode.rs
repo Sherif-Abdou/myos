@@ -193,6 +193,14 @@ impl Inode {
     pub fn create_directory(&self, name: &str) -> FsResult<()> {
         self.operations.lock().create_directory(name)
     }
+
+    pub fn remove_file(&self, name: &str) -> FsResult<()> {
+        self.operations.lock().remove_file(name)
+    }
+
+    pub fn remove_directory(&self, name: &str) -> FsResult<()> {
+        self.operations.lock().remove_directory(name)
+    }
 }
 
 impl_link!(Inode, 0 => links);

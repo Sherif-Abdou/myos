@@ -4,7 +4,7 @@
 
 use crate::{
     subsystem::{
-        FileSystem, FsError, Inode, block_cache,
+        FileSystem, FsError, FsResult, Inode, RemovalType, block_cache,
         fs::ext2::{
             cache::Ext2InodeCache,
             raw::{Ext2Inode, SuperBlock},
@@ -139,5 +139,37 @@ impl FileSystem for Ext2Fs {
             current = child.inode().clone();
         }
         Ok(current)
+    }
+
+    fn remove(&self, path: &str, flags: RemovalType) -> FsResult<()> {
+        let parts = path.split("/");
+        let num_parts = path.chars().filter(|c| *c == '/').count();
+
+        let mut current = self.root();
+        for part in parts.take(num_parts.saturating_sub(1)) {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor.get().is_some_and(|child| child.name() != part) {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = child.inode().clone();
+        }
+
+        let child_to_remove = path.split('/').nth(num_parts).unwrap();
+        match flags {
+            RemovalType::File => current.remove_file(child_to_remove),
+            RemovalType::Directory => current.remove_directory(child_to_remove),
+        }?;
+
+        Ok(())
     }
 }

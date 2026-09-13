@@ -26,6 +26,11 @@ impl Arc<Ext2InodeCache> {
         let node = self.lookup(inode_number);
 
         if let Some(node) = node {
+            // If link count is zero, act like it's been wiped from disk.
+            if *node.ext2_inode.links_count.lock() == 0 {
+                return Err(FsError::NoExist);
+            }
+
             Ok(node)
         } else {
             if !self.inode_exists(inode_number) {
@@ -160,6 +165,32 @@ impl Ext2InodeCache {
 
         let current_bitmap_block = group as u64 * self.super_block.blocks_per_group as u64
             + self.super_block.block_bitmap_offset()
+            + byte_offset as u64
+            + 1;
+
+        let offset = current_bitmap_block * self.super_block.block_size() + byte_offset as u64;
+
+        let mut byte = [0u8; 1];
+        block_cache().read(offset as usize, &mut byte);
+
+        byte[0] &= !(1 << bit_index);
+        block_cache().write(offset as usize, &byte);
+    }
+
+    pub fn free_inode(&self, inode: u32) {
+        if inode == 0 {
+            return;
+        }
+
+        let _allocation_lock = self.bitmask_lock.lock();
+
+        let group = (inode - 1) / self.super_block.inodes_per_group;
+        let group_block_offset = (inode - 1) % self.super_block.inodes_per_group;
+        let byte_offset = group_block_offset / 8;
+        let bit_index = group_block_offset % 8;
+
+        let current_bitmap_block = group as u64 * self.super_block.blocks_per_group as u64
+            + self.super_block.inode_bitmap_offset()
             + byte_offset as u64
             + 1;
 

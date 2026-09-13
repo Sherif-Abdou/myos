@@ -4,7 +4,7 @@ use crate::{
     allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
     interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
     sched::SCHEDULER,
-    subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe},
+    subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe, RemovalType},
     timer::us_sleep,
     utils::Arc,
 };
@@ -127,6 +127,83 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         let descriptor = task.user_fd_table().unwrap().add_file_fd(inode);
         unsafe {
             (*regs).gprs[0] = descriptor as u64;
+        }
+    } else {
+        unsafe {
+            (*regs).gprs[0] = (-1i64) as u64;
+        }
+    }
+
+    regs
+}
+
+pub fn unlink(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
+    let user_cstr = unsafe { UserInput::from_cstr(user_cstr_addr, MAX_STRING_LEN) };
+
+    let Ok(user_cstr) = user_cstr else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
+    let mut scratch = kbox_bytes(user_cstr.len());
+
+    user_cstr.copy_to_slice(&mut scratch);
+
+    let Ok(path) = str::from_utf8(&scratch) else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
+    let ret = MOUNT_TABLE
+        .get()
+        .unwrap()
+        .remove(path, RemovalType::Directory);
+
+    if ret.is_ok() {
+        unsafe {
+            (*regs).gprs[0] = 0u64;
+        }
+    } else {
+        unsafe {
+            (*regs).gprs[0] = (-1i64) as u64;
+        }
+    }
+
+    regs
+}
+
+pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
+    let user_cstr = unsafe { UserInput::from_cstr(user_cstr_addr, MAX_STRING_LEN) };
+
+    let Ok(user_cstr) = user_cstr else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
+    let mut scratch = kbox_bytes(user_cstr.len());
+
+    user_cstr.copy_to_slice(&mut scratch);
+
+    let Ok(path) = str::from_utf8(&scratch) else {
+        unsafe {
+            (*regs).gprs[0] = -1i64 as u64;
+        }
+        return regs;
+    };
+
+    let ret = MOUNT_TABLE.get().unwrap().remove(path, RemovalType::File);
+
+    if ret.is_ok() {
+        unsafe {
+            (*regs).gprs[0] = 0u64;
         }
     } else {
         unsafe {
@@ -456,6 +533,8 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[20] = Syscall::new(fork);
     table[22] = Syscall::new(exec);
     table[24] = Syscall::new(getdents);
+    table[25] = Syscall::new(unlink);
+    table[26] = Syscall::new(rmdir);
     table[27] = Syscall::new(waitpid);
     table[33] = Syscall::new(sbrk);
     table[40] = Syscall::new(pipe);
