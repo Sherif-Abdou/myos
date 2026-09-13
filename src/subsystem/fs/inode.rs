@@ -18,6 +18,10 @@ pub enum FsError {
     NoSpace,
     /// Bad metadata for the device being read.
     BadMeta,
+    /// Contents were not empty before operation.
+    NotEmpty,
+    /// Argument is not valid.
+    InvalidArgument,
     /// Nothing more to read.
     EndOfFile,
 }
@@ -60,6 +64,24 @@ pub trait InodeOperations: Send + Sync + 'static {
 
     fn create_directory(&self, name: &str) -> FsResult<()> {
         let _ = name;
+
+        Err(FsError::Unsupported)
+    }
+
+    fn remove_file(&self, name: &str) -> FsResult<()> {
+        let _ = name;
+
+        Err(FsError::Unsupported)
+    }
+
+    fn remove_directory(&self, name: &str) -> FsResult<()> {
+        let _ = name;
+
+        Err(FsError::Unsupported)
+    }
+
+    fn truncate(&self, desired_size: usize) -> FsResult<()> {
+        let _ = desired_size;
 
         Err(FsError::Unsupported)
     }

@@ -214,6 +214,14 @@ impl<T: LinkedNode<T, N>, const N: usize> List<T, N> {
         }
     }
 
+    pub fn len(&self) -> usize {
+        let mut len = 0;
+        for _ in self.cursor() {
+            len += 1
+        }
+        len
+    }
+
     pub fn remove_front(&mut self) -> Option<ListArc<T, N>> {
         if self.is_empty() {
             return None;

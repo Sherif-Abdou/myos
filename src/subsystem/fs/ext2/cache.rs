@@ -146,6 +146,32 @@ impl Ext2InodeCache {
         ((byte[0] >> bit_desired) & 1) != 0
     }
 
+    pub fn free_data_block(&self, block: u32) {
+        if block == 0 {
+            return;
+        }
+
+        let _allocation_lock = self.bitmask_lock.lock();
+
+        let group = block / self.super_block.blocks_per_group;
+        let group_block_offset = block % self.super_block.blocks_per_group;
+        let byte_offset = group_block_offset / 8;
+        let bit_index = group_block_offset % 8;
+
+        let current_bitmap_block = group as u64 * self.super_block.blocks_per_group as u64
+            + self.super_block.block_bitmap_offset()
+            + byte_offset as u64
+            + 1;
+
+        let offset = current_bitmap_block * self.super_block.block_size() + byte_offset as u64;
+
+        let mut byte = [0u8; 1];
+        block_cache().read(offset as usize, &mut byte);
+
+        byte[0] &= !(1 << bit_index);
+        block_cache().write(offset as usize, &byte);
+    }
+
     /// Finds and reserves a data block to be used for a given inode.
     pub fn allocate_data_block(&self, inode_number: u32) -> u32 {
         let _allocation_lock = self.bitmask_lock.lock();

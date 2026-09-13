@@ -4,14 +4,14 @@ use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FsError, FsResult, Inode, InodeDirectoryEntry, InodeOperations,
+        FsError, FsResult, Inode, InodeDirectoryEntry, InodeOperations, block_cache,
         fs::ext2::{
             cache::Ext2InodeCache,
             cursor::{Ext2InodeCursor, Ext2InodeWriteCursor},
             raw::{Ext2Inode, LinkedDirectoryEntryHeader, SuperBlock},
         },
     },
-    utils::{Arc, KString, ListLinks, SpinLock, UniqueArc, copy_to_uninit},
+    utils::{Arc, KString, List, ListLinks, SpinLock, UniqueArc, copy_to_uninit},
 };
 
 pub struct Ext2Meta {
@@ -49,6 +49,82 @@ pub struct Ext2InodeWrapper {
     pub(crate) links: ListLinks,
 }
 
+impl Ext2InodeWrapper {
+    /// Walks a linked list block
+    fn walk_block<F: Fn(u32)>(block: u32, func: F) {
+        let mut buf = [0u8; 64];
+
+        for i in 0..(1024 / buf.len()) {
+            block_cache().read(block as usize * 1024 + i * buf.len(), &mut buf);
+
+            for subset in 0..(buf.len() / 4) {
+                let block =
+                    u32::from_le_bytes(buf[4 * subset..4 * (subset + 1)].try_into().unwrap());
+
+                func(block);
+            }
+        }
+    }
+}
+
+impl Drop for Ext2InodeWrapper {
+    fn drop(&mut self) {
+        if *self.ext2_inode.links_count.lock() == 0 {
+            let blocks = *self.ext2_inode.block.lock();
+            for block in blocks.iter().take(12) {
+                if *block != 0 {
+                    self.inode_cache.free_data_block(*block);
+                }
+            }
+
+            let single_linked_block = blocks[12];
+            if single_linked_block != 0 {
+                Self::walk_block(single_linked_block, |block| {
+                    if block != 0 {
+                        self.inode_cache.free_data_block(block);
+                    }
+                });
+                self.inode_cache.free_data_block(single_linked_block);
+            }
+
+            let double_linked_block = blocks[13];
+            if double_linked_block != 0 {
+                Self::walk_block(double_linked_block, |single_linked_block| {
+                    if single_linked_block != 0 {
+                        Self::walk_block(single_linked_block, |block| {
+                            if block != 0 {
+                                self.inode_cache.free_data_block(block);
+                            }
+                        });
+                        self.inode_cache.free_data_block(single_linked_block);
+                    }
+                });
+                self.inode_cache.free_data_block(double_linked_block);
+            }
+
+            let triple_linked_block = blocks[14];
+            if triple_linked_block != 0 {
+                Self::walk_block(triple_linked_block, |double_linked_block| {
+                    if double_linked_block != 0 {
+                        Self::walk_block(double_linked_block, |single_linked_block| {
+                            if single_linked_block != 0 {
+                                Self::walk_block(single_linked_block, |block| {
+                                    if block != 0 {
+                                        self.inode_cache.free_data_block(block);
+                                    }
+                                });
+                                self.inode_cache.free_data_block(single_linked_block);
+                            }
+                        });
+                        self.inode_cache.free_data_block(double_linked_block);
+                    }
+                });
+                self.inode_cache.free_data_block(triple_linked_block);
+            }
+        }
+    }
+}
+
 impl_link!(Ext2InodeWrapper, 0 => links);
 
 impl Ext2InodeWrapper {}
@@ -59,7 +135,7 @@ impl InodeOperations for Ext2InodeWrapper {
 
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
-        Ok(cursor.read(offset, buffer))
+        cursor.read(offset, buffer)
     }
 
     fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
@@ -173,7 +249,7 @@ impl InodeOperations for Ext2InodeWrapper {
 
         self.inode_cache.write_node(new_inode_number, &inode);
 
-        write_cursor.append_dentry(new_inode_number, name);
+        write_cursor.append_dentry(new_inode_number, name)?;
 
         Ok(())
     }
@@ -210,20 +286,131 @@ impl InodeOperations for Ext2InodeWrapper {
 
         self.inode_cache.write_node(new_inode_number, &inode);
 
-        write_cursor.append_dentry(new_inode_number, name);
+        write_cursor.append_dentry(new_inode_number, name)?;
 
         let inode = self.inode_cache.lookup_or_create(new_inode_number)?;
 
         let mut write_cursor =
             Ext2InodeWriteCursor::new(inode.number, &inode.ext2_inode, &inode.inode_cache);
 
-        write_cursor.append_dentry(new_inode_number, ".");
-        write_cursor.append_dentry(self.number, "..");
+        write_cursor.append_dentry(new_inode_number, ".")?;
+        write_cursor.append_dentry(self.number, "..")?;
 
         *write_cursor.meta().links_count.lock() += 1;
 
         self.inode_cache.modify_node(self.number, |inode| {
             inode.links_count += 1;
+        });
+
+        Ok(())
+    }
+
+    fn remove_file(&self, name: &str) -> FsResult<()> {
+        let _io_lock = self.io_lock.lock();
+
+        let mut cursor =
+            Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
+
+        let target_child_dentry = cursor.find_dentry_with_name(name)?;
+
+        // Update the previous link to jump over the dentry.
+        if !target_child_dentry.is_dentry_start_of_block() {
+            let rec_len = cursor
+                .read_dentry_header(target_child_dentry.dentry_offset())?
+                .rec_len;
+
+            cursor.rmw_dentry_header(
+                target_child_dentry
+                    .previous_dentry_offset()
+                    .ok_or(FsError::BadMeta)?,
+                |mut dentry| {
+                    dentry.rec_len += rec_len;
+
+                    dentry
+                },
+            )?;
+        } else {
+            // Mark inode = 0
+            cursor.rmw_dentry_header(target_child_dentry.dentry_offset(), |mut dentry| {
+                dentry.inode = 0;
+
+                dentry
+            })?;
+        }
+
+        *self.ext2_inode.links_count.lock() -= 1;
+        self.inode_cache.modify_node(self.number, |inode| {
+            inode.links_count -= 1;
+        });
+
+        Ok(())
+    }
+
+    fn remove_directory(&self, name: &str) -> FsResult<()> {
+        let _io_lock = self.io_lock.lock();
+
+        let mut cursor =
+            Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
+
+        let target_child_dentry = cursor.find_dentry_with_name(name)?;
+
+        let child_inode = self
+            .inode_cache
+            .lookup_or_create(target_child_dentry.dentry_inode())?;
+
+        let mut list = List::new();
+        child_inode.list_directory(&mut list)?;
+
+        // Assume the invariant that . and .. are the first two files.
+        //
+        // TODO: Perhaps verify this eventually.
+        if list.len() > 2 {
+            return Err(FsError::NotEmpty);
+        }
+
+        // Update the previous link to jump over the dentry.
+        if !target_child_dentry.is_dentry_start_of_block() {
+            let rec_len = cursor
+                .read_dentry_header(target_child_dentry.dentry_offset())?
+                .rec_len;
+
+            cursor.rmw_dentry_header(
+                target_child_dentry
+                    .previous_dentry_offset()
+                    .ok_or(FsError::BadMeta)?,
+                |mut dentry| {
+                    dentry.rec_len += rec_len;
+
+                    dentry
+                },
+            )?;
+        } else {
+            // Mark inode = 0
+            cursor.rmw_dentry_header(target_child_dentry.dentry_offset(), |mut dentry| {
+                dentry.inode = 0;
+
+                dentry
+            })?;
+        }
+
+        *self.ext2_inode.links_count.lock() -= 1;
+        self.inode_cache.modify_node(self.number, |inode| {
+            inode.links_count -= 1;
+        });
+
+        Ok(())
+    }
+
+    fn truncate(&self, desired_size: usize) -> FsResult<()> {
+        let _iolock = self.io_lock.lock();
+
+        if desired_size > u32::MAX as usize {
+            return Err(FsError::InvalidArgument);
+        }
+
+        *self.ext2_inode.size.lock() = desired_size as u32;
+        self.inode_cache.modify_node(self.number, |inode| {
+            inode.size = desired_size as u32;
         });
 
         Ok(())

@@ -1,3 +1,5 @@
+use core::mem::MaybeUninit;
+
 use alloc::slice;
 
 use crate::{
@@ -6,6 +8,7 @@ use crate::{
         FsError, FsResult, block_cache,
         fs::ext2::{cache::Ext2InodeCache, inode::Ext2Meta, raw::LinkedDirectoryEntryHeader},
     },
+    utils::copy_to_uninit,
 };
 
 pub struct Ext2InodeCursor<'a> {
@@ -20,6 +23,33 @@ pub struct Ext2InodeCursor<'a> {
     l2_offsets: [u32; 2],
     // Block offsets within block 14's triply linked list
     l3_offsets: [u32; 3],
+}
+
+pub struct DentrySearchOutput {
+    // Offset within the file for the dentry output.
+    dentry_offset: u64,
+    // Inode of the dentry.
+    dentry_inode: u32,
+    /// Offset of the previous dentry, if there is a previous dentry.
+    previous_dentry_offset: Option<u64>,
+}
+
+impl DentrySearchOutput {
+    pub fn dentry_offset(&self) -> u64 {
+        self.dentry_offset
+    }
+
+    pub fn dentry_inode(&self) -> u32 {
+        self.dentry_inode
+    }
+
+    pub fn is_dentry_start_of_block(&self) -> bool {
+        self.dentry_offset.is_multiple_of(1024)
+    }
+
+    pub fn previous_dentry_offset(&self) -> Option<u64> {
+        self.previous_dentry_offset
+    }
 }
 
 impl<'a> Ext2InodeCursor<'a> {
@@ -124,7 +154,7 @@ impl<'a> Ext2InodeCursor<'a> {
         }
     }
 
-    pub fn read(&mut self, mut offset: u64, buf: &mut [u8]) -> usize {
+    pub fn read(&mut self, mut offset: u64, buf: &mut [u8]) -> FsResult<usize> {
         let file_size = *self.inode.size.lock();
         let maximum_buf_size = (file_size as usize).saturating_sub(offset as usize);
         let effective_buf_size = buf.len().min(maximum_buf_size);
@@ -154,17 +184,89 @@ impl<'a> Ext2InodeCursor<'a> {
             have_read += to_read_in_block as usize;
             offset += to_read_in_block as u64;
         }
-        have_read
+        Ok(have_read)
     }
 
     pub fn read_exact(&mut self, offset: u64, buf: &mut [u8]) -> FsResult<()> {
-        let len = self.read(offset, buf);
+        let len = self.read(offset, buf)?;
 
         if len != buf.len() {
             Err(FsError::EndOfFile)
         } else {
             Ok(())
         }
+    }
+
+    pub fn find_dentry_with_name(&mut self, name: &str) -> FsResult<DentrySearchOutput> {
+        if !self.inode.is_directory() {
+            return Err(FsError::Unsupported);
+        }
+
+        let file_size = *self.inode.size.lock() as u64;
+        let mut file_offset = 0;
+        let mut block_offset = 0;
+        let mut latest_rec_len = 0;
+
+        let mut dentry_header: MaybeUninit<LinkedDirectoryEntryHeader> = MaybeUninit::uninit();
+
+        // TOOD: Support full length file names.
+        let mut name_buffer = [0u8; 256];
+
+        let mut active_block = self.get_current_block();
+        while active_block != 0 && file_offset < file_size {
+            while block_offset < 1024 && file_offset < file_size {
+                let mut dentry_buffer = [0u8; core::mem::size_of::<LinkedDirectoryEntryHeader>()];
+
+                self.read_exact(file_offset, &mut dentry_buffer)?;
+
+                copy_to_uninit(&mut dentry_header, &dentry_buffer);
+
+                let dentry_header = unsafe { dentry_header.assume_init_ref() };
+
+                if dentry_header.rec_len <= 8
+                    || !dentry_header.rec_len.is_multiple_of(4)
+                    || block_offset + dentry_header.rec_len as usize > 1024
+                    || dentry_header.name_len as u16 > dentry_header.rec_len - 8
+                {
+                    return Err(FsError::BadMeta);
+                }
+
+                let inode_number = dentry_header.inode;
+
+                if inode_number != 0 {
+                    let name_len = (dentry_header.name_len as usize).min(name_buffer.len());
+
+                    self.read_exact(file_offset + 8, &mut name_buffer[..name_len])?;
+
+                    // Every file within a directory is assumed to have a unique name.
+                    if &name_buffer[..name_len] == name.as_bytes() {
+                        if latest_rec_len == 0 {
+                            return Ok(DentrySearchOutput {
+                                dentry_offset: file_offset,
+                                dentry_inode: dentry_header.inode,
+                                previous_dentry_offset: None,
+                            });
+                        } else {
+                            return Ok(DentrySearchOutput {
+                                dentry_offset: file_offset,
+                                dentry_inode: dentry_header.inode,
+                                previous_dentry_offset: Some(file_offset - latest_rec_len),
+                            });
+                        }
+                    }
+                }
+
+                latest_rec_len = dentry_header.rec_len as u64;
+                file_offset += dentry_header.rec_len as u64;
+                block_offset += dentry_header.rec_len as usize;
+            }
+
+            self.next_block();
+            active_block = self.get_current_block();
+            block_offset = 0;
+        }
+
+        Err(FsError::NoExist)
     }
 }
 
@@ -345,7 +447,7 @@ impl<'a> Ext2InodeWriteCursor<'a> {
         have_written
     }
 
-    pub fn append_dentry(&mut self, child_inode_number: u32, name: &str) {
+    pub fn append_dentry(&mut self, child_inode_number: u32, name: &str) -> FsResult<()> {
         let file_size = *self.inner.inode.size.lock() as u64;
         let mut cursor = Ext2InodeCursor::new(self.inner.inode);
 
@@ -359,7 +461,7 @@ impl<'a> Ext2InodeWriteCursor<'a> {
         while cursor.get_current_block() != 0 && offset < file_size {
             let mut local_block_offset = 0;
             while local_block_offset < 1024 && offset < file_size {
-                let _ = cursor.read(offset, &mut dentry_header);
+                let _ = cursor.read(offset, &mut dentry_header)?;
                 let overlay = dentry_header.as_ptr() as *const LinkedDirectoryEntryHeader;
 
                 latest_rec_len = unsafe { (*overlay).rec_len as u64 };
@@ -439,5 +541,51 @@ impl<'a> Ext2InodeWriteCursor<'a> {
             self.write(next_available_start, new_header_buffer);
             self.write(next_available_start + 8, name.as_bytes());
         }
+        Ok(())
+    }
+
+    pub fn find_dentry_with_name(&mut self, name: &str) -> FsResult<DentrySearchOutput> {
+        self.inner.find_dentry_with_name(name)
+    }
+
+    pub fn read_dentry_header(&mut self, file_offset: u64) -> FsResult<LinkedDirectoryEntryHeader> {
+        let mut dentry_header: MaybeUninit<LinkedDirectoryEntryHeader> = MaybeUninit::uninit();
+        let mut dentry_buffer = [0u8; core::mem::size_of::<LinkedDirectoryEntryHeader>()];
+
+        self.inner.read_exact(file_offset, &mut dentry_buffer)?;
+
+        copy_to_uninit(&mut dentry_header, &dentry_buffer);
+
+        Ok(unsafe { dentry_header.assume_init() })
+    }
+
+    pub fn rmw_dentry_header<
+        F: FnOnce(LinkedDirectoryEntryHeader) -> LinkedDirectoryEntryHeader,
+    >(
+        &mut self,
+        file_offset: u64,
+        func: F,
+    ) -> FsResult<()> {
+        let mut dentry_header: MaybeUninit<LinkedDirectoryEntryHeader> = MaybeUninit::uninit();
+        let mut dentry_buffer = [0u8; core::mem::size_of::<LinkedDirectoryEntryHeader>()];
+
+        self.inner.read_exact(file_offset, &mut dentry_buffer)?;
+
+        copy_to_uninit(&mut dentry_header, &dentry_buffer);
+
+        let dentry_header = unsafe { dentry_header.assume_init() };
+
+        let modified_dentry_header = func(dentry_header);
+
+        let modified_dentry_header_buffer = unsafe {
+            core::slice::from_raw_parts(
+                (&raw const modified_dentry_header).cast::<u8>(),
+                core::mem::size_of::<LinkedDirectoryEntryHeader>(),
+            )
+        };
+
+        self.write(file_offset, modified_dentry_header_buffer);
+
+        Ok(())
     }
 }
