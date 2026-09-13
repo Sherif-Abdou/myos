@@ -1,11 +1,7 @@
 use crate::{
-    impl_link,
-    sched::Mutex,
-    subsystem::{
-        FileSystem, FsResult, InodeDirectoryEntry,
-        fs::{Inode, InodeOperations},
-    },
-    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    impl_link, sched::Mutex, subsystem::{
+        FileSystem, FsResult, InodeDirectoryEntry, RemovalType, fs::{Inode, InodeOperations},
+    }, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 use super::FsError;
@@ -152,22 +148,31 @@ impl InodeOperations for InodeDirectory {
 
         Ok(())
     }
-}
 
-impl InodeDirectory {
-    fn remove_file(&self, name: &str) {
+    fn remove_file(&self, name: &str) -> FsResult<()> {
         let mut children = self.children.lock();
         let mut cursor = children.cursor_mut();
 
         while let Some(file) = cursor.get_arc() {
             if file.name() == name {
                 cursor.remove();
+                return Ok(());
             } else {
                 let _ = cursor.next();
             }
         }
+
+        Err(FsError::NoExist)
     }
 
+    fn remove_directory(&self, name: &str) -> FsResult<()> {
+        self.remove_file(name)?;
+
+        Ok(())
+    }
+}
+
+impl InodeDirectory {
     fn create_directory(&self, name: &str) {
         let directory = InodeDirectory {
             children: Mutex::new(List::new()),
@@ -177,10 +182,6 @@ impl InodeDirectory {
             UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into();
 
         self.children.lock().push_back(node);
-    }
-
-    fn remove_directory(&self, name: &str) {
-        self.remove_file(name);
     }
 }
 
@@ -313,5 +314,37 @@ impl FileSystem for TmpFs {
                 .map(|wrapper| wrapper.inode().clone())
                 .ok_or(FsError::NoExist)
         })?
+    }
+
+    fn remove(&self, path: &str, flags: RemovalType) -> FsResult<()> {
+        let parts = path.split("/");
+        let num_parts = path.chars().filter(|c| *c == '/').count();
+
+        let mut current = self.root();
+        for part in parts.take(num_parts.saturating_sub(1)) {
+            if part.is_empty() {
+                continue;
+            }
+
+            let potential_child = current.list_directory(|list| {
+                let mut cursor = list.cursor();
+                while cursor.get().is_some_and(|child| child.name() != part) {
+                    let _ = cursor.next();
+                }
+
+                cursor.get_arc()
+            })?;
+
+            let child = potential_child.ok_or(FsError::NoExist)?;
+            current = child.inode().clone();
+        }
+
+        let child_to_remove = path.split('/').nth(num_parts).unwrap();
+        match flags {
+            RemovalType::File => current.remove_file(child_to_remove),
+            RemovalType::Directory => current.remove_directory(child_to_remove),
+        }?;
+
+        Ok(())
     }
 }
