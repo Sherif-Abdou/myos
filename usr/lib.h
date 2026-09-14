@@ -2,6 +2,8 @@
 #include <stdint.h>
 
 size_t strlen(const char *str);
+size_t strnlen(const char *str, size_t n);
+int strncmp(const char *a, const char *b, size_t n);
 
 uintptr_t syscall(uintptr_t num, uintptr_t x0, uintptr_t x1, uintptr_t x2,
                   uintptr_t x3, uintptr_t x4, uintptr_t x5, uintptr_t x6,
@@ -28,6 +30,8 @@ int puts(const char *str);
 int putchar(int c);
 
 int pipe(int fds[2]);
+
+int getdents(int fd, char *buf, size_t len);
 
 int ns_sleep(long long delay_ns);
 

@@ -1,7 +1,11 @@
 use crate::{
-    impl_link, sched::Mutex, subsystem::{
-        FileSystem, FsResult, InodeDirectoryEntry, RemovalType, fs::{Inode, InodeOperations},
-    }, utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
+    impl_link,
+    sched::Mutex,
+    subsystem::{
+        FileSystem, FsResult, InodeDirectoryEntry, RemovalType,
+        fs::{Inode, InodeOperations},
+    },
+    utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
 };
 
 use super::FsError;
@@ -177,7 +181,11 @@ impl InodeDirectory {
         let directory = InodeDirectory {
             children: Mutex::new(List::new()),
         };
-        let inode = Arc::new(Inode::new(Arc::new(directory)));
+        let directory = Arc::new(directory);
+        let inode = Arc::new(Inode::new(directory.clone()));
+
+        // TODO: Figure out . and ..
+
         let node: ListArc<InodeDirectoryEntry, 0> =
             UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into();
 

@@ -7,6 +7,75 @@
 const char *base = "hello world\n";
 static volatile int a;
 
+#define MAX_CMD_LEN 16
+
+int run_cat(const char *args) {
+    const char *path = args;
+    char buf[16] = {0};
+    int fd = open(path);
+    int ret;
+    if (fd < 0)
+        return fd;
+
+    do {
+        ret = read(fd, buf, 16);
+        write(1, buf, ret);
+    } while (ret > 0);
+
+teardown:
+    close(fd);
+
+    return ret;
+};
+
+int run_ls(const char *args) {
+    const char *path = args;
+    char buf[64];
+    int fd = open(path);
+    int ret = 0;
+    if (fd < 0)
+        return fd;
+
+    int count = getdents(fd, buf, 64);
+    if (count < 0) {
+        goto teardown;
+    }
+    const char *name = buf;
+    do {
+        int len = strlen(name);
+
+        write(1, name, len);
+        putchar('\n');
+
+        name = name + len + 1;
+        count -= len + 1;
+    } while (count > 0);
+
+teardown:
+    close(fd);
+
+    return ret;
+};
+
+int run_command(const char *cmd) {
+    int cmd_len = 0;
+    while (cmd_len < MAX_CMD_LEN && cmd[cmd_len] != ' ')
+        ++cmd_len;
+
+    if (cmd_len == 2 && strncmp(cmd, "ls", 2)) {
+        run_ls(cmd + cmd_len + 1);
+    }
+    if (cmd_len == 3 && strncmp(cmd, "cat", 3)) {
+        run_cat(cmd + cmd_len + 1);
+    }
+    if (cmd_len == 4 && strncmp(cmd, "echo", 4)) {
+        puts(cmd + cmd_len + 1);
+        putchar('\n');
+    }
+
+    return -1;
+}
+
 void shell(void) {
     char line[64];
     line[63] = 0;
@@ -24,8 +93,9 @@ void shell(void) {
                     }
                 } else if (line[cursor] == '\r') {
                     putchar('\n');
-                    write(0, line, cursor);
-                    putchar('\n');
+
+                    line[cursor] = 0;
+                    run_command(line);
                     cursor = 0;
                     puts("# ");
                 } else {
@@ -37,76 +107,14 @@ void shell(void) {
     }
 }
 
-void toy(void) {
-    a = 50;
-    int child = fork();
-    if (child != 0) {
-        a = 0;
-        const char *addr = "hello land\n";
-        // write(0, (const char *)0x8, 4);
-
-        int fd = open("hi.txt");
-
-        char buf[64];
-        buf[63] = 0;
-
-        if (fd < 0) {
-            puts("ahhh\n");
-        } else {
-            int len = read(fd, buf, 63);
-
-            puts(buf);
-            close(fd);
-        }
-        int ret = waitpid(child);
-        if (ret < 0) {
-            puts("Wait went incorrect\n");
-        }
-
-        void *ptr = sbrk(0);
-
-        puts("This is the parent after the child is done.\n");
-
-        if (a != 0) {
-            puts("Copy on write fails in parent\n");
-        }
-    } else {
-        const char *buf[2];
-        buf[0] = "this is an argument\n";
-        buf[1] = "so guys, thoughts on markiplier?\n";
-        ms_sleep(3000);
-        if (a != 50) {
-            puts("Copy on write fails in child\n");
-        }
-        a = 27;
-        exec("other", 2, buf);
-    }
-}
-
 int main(int argc, const char **argv) {
     int fd = open("/dev/console");
 
-    write(fd, "world\n", strlen("world\n"));
+    dup2(fd, 0);
+    dup2(fd, 1);
+    dup2(fd, 2);
 
-    int array[2] = {0, 0};
-
-    pipe(array);
-
-    int pid = fork();
-
-    if (pid == 0) { // child
-        dup2(array[1],1);
-        ms_sleep(1000);
-        puts("hello there\n");
-        puts("I love fortnite\n");
-    } else { // parent
-        char buf[8];
-        while (1) {
-            int len = read(array[0], buf, 8);
-
-            write(fd, buf, len);
-        }
-    }
+    shell();
 
     return 0;
 }

@@ -1,11 +1,30 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 size_t strlen(const char *str) {
     size_t i = 0;
     while (str[i] != 0)
         ++i;
     return i;
+}
+
+size_t strnlen(const char *str, size_t n) {
+    size_t i = 0;
+    while (str[i] != 0 && i < n)
+        ++i;
+    return i;
+}
+
+int strncmp(const char *a, const char *b, size_t n) {
+    size_t i = 0;
+    while (a[i] && b[i] && i < n) {
+        if (a[i] != b[i])
+            return a[i] - b[i];
+        ++i;
+    }
+
+    return a[i] - b[i];
 }
 
 uintptr_t syscall(uintptr_t num, uintptr_t x0, uintptr_t x1, uintptr_t x2,
@@ -91,6 +110,10 @@ int ms_sleep(long long delay_ms) {
 void exit(int code) {
     syscall(50, code, 0, 0, 0, 0, 0, 0, 0);
     __builtin_unreachable();
+}
+
+int getdents(int fd, char *buf, size_t len) {
+    return syscall(24, fd, (uintptr_t)buf, len, 0, 0, 0, 0, 0);
 }
 
 __attribute__((weak)) int main(int argc, const char **argv);
