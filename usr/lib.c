@@ -1,7 +1,8 @@
-#include <cstring>
-#include <stddef.h>
 #include <stdint.h>
+#include <sys/cdefs.h>
 #include <sys/types.h>
+
+#include "lib.h"
 
 size_t strlen(const char *str) {
     size_t i = 0;
@@ -141,4 +142,123 @@ int _start() {
     int ret = main(argc, argv);
 
     exit(ret);
+}
+
+struct alloc_ll_header {
+    // Memory in this header (including the header).
+    size_t size;
+    struct alloc_ll_header *next;
+};
+
+#define ALLOC_ALIGN 16
+
+struct alloc_ll_header *claim_more_mem(size_t hint) {
+    size_t growth =
+        hint > 4096 ? (hint + ALLOC_ALIGN - 1) & ~(ALLOC_ALIGN - 1) : 4096;
+    struct alloc_ll_header *ptr = sbrk(0);
+    sbrk(growth);
+
+    ptr->size = growth;
+    ptr->next = NULL;
+
+    return ptr;
+}
+
+static struct alloc_ll_header *first_hole = NULL;
+
+void *malloc(size_t size) {
+    // Align up allocation size.
+    size = (size + ALLOC_ALIGN - 1) & ~(ALLOC_ALIGN - 1);
+
+    if (size == 0)
+        return NULL;
+
+    // claim more memory none currently available.
+    if (first_hole == NULL)
+        first_hole = claim_more_mem(size + sizeof(struct alloc_ll_header));
+
+    struct alloc_ll_header *prev = NULL;
+    struct alloc_ll_header *hole = first_hole;
+    size_t mem_needed =
+        size + (sizeof(size_t) + (ALLOC_ALIGN - 1)) & ~(ALLOC_ALIGN - 1);
+    while (hole && hole->size < mem_needed) {
+        prev = hole;
+        hole = hole->next;
+    }
+
+    if (!hole) {
+        hole = claim_more_mem(size + sizeof(struct alloc_ll_header));
+
+        if (prev)
+            prev->next = hole;
+        else
+            first_hole = hole;
+    }
+
+    struct alloc_ll_header *hole_next = hole->next;
+
+    uintptr_t mem_start =
+        ((uintptr_t)hole + sizeof(size_t) + (ALLOC_ALIGN - 1)) &
+        ~(ALLOC_ALIGN - 1);
+    uintptr_t header_start = (uintptr_t)hole;
+    uintptr_t header_end = header_start + mem_needed;
+    size_t remaining = hole->size - mem_needed;
+
+    *(size_t *)header_start =
+        remaining >= sizeof(struct alloc_ll_header) ? mem_needed : mem_needed + remaining;
+
+    if (remaining >= sizeof(struct alloc_ll_header)) {
+        struct alloc_ll_header *end = (struct alloc_ll_header *)header_end;
+
+        if (prev)
+            prev->next = end;
+        else
+            first_hole = end;
+        end->size = remaining;
+        end->next = hole_next;
+    } else {
+        if (prev)
+            prev->next = hole_next;
+        else
+            first_hole = hole_next;
+    }
+
+    return (void *)mem_start;
+}
+
+void free(void *ptr) {
+    if (ptr == NULL)
+        return;
+
+    uintptr_t header_addr =
+        ((uintptr_t)ptr - sizeof(size_t)) & ~(ALLOC_ALIGN - 1);
+    struct alloc_ll_header *header = (struct alloc_ll_header *)header_addr;
+
+    struct alloc_ll_header *prev = NULL;
+    struct alloc_ll_header *current = first_hole;
+    while (current && (uintptr_t)current < header_addr) {
+        prev = current;
+        current = current->next;
+    }
+
+    header->next = prev ? prev->next : first_hole;
+    if (prev)
+        prev->next = header;
+    else
+        first_hole = prev;
+
+
+    uintptr_t end_of_current;
+    while (current && (end_of_current = (uintptr_t)current + current->size) ==
+           (uintptr_t)current->next) {
+        current->size += current->next->size;
+        current->next = current->next->next;
+    }
+
+    current = prev;
+    while (current && (end_of_current = (uintptr_t)current + current->size) ==
+           (uintptr_t)current->next) {
+        current->size += current->next->size;
+        current->next = current->next->next;
+    }
 }

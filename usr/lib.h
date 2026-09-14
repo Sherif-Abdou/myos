@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
 size_t strlen(const char *str);
 size_t strnlen(const char *str, size_t n);
 int strncmp(const char *a, const char *b, size_t n);
@@ -44,3 +45,7 @@ int ms_sleep(long long delay_ms);
 void *sbrk(long long offset);
 
 void exit(int code);
+
+void *malloc(size_t size);
+
+void free(void *ptr);
