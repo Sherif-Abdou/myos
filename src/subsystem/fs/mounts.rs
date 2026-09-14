@@ -119,4 +119,16 @@ impl FileSystem for MountTable {
 
         Err(super::FsError::NoExist)
     }
+
+    fn remove(&self, path: &str, flags: super::RemovalType) -> super::FsResult<()> {
+        for mount in self.mounts.lock().cursor() {
+            if path.starts_with(&*mount.path) {
+                let effective_path = path.strip_prefix(&*mount.path).unwrap();
+
+                return mount.fs.remove(effective_path, flags);
+            }
+        }
+
+        Err(super::FsError::NoExist)
+    }
 }

@@ -1,3 +1,4 @@
+#include <cstring>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -25,6 +26,18 @@ int strncmp(const char *a, const char *b, size_t n) {
     }
 
     return a[i] - b[i];
+}
+
+void *memcpy(void *s1, const void *s2, size_t n) {
+    while (n--)
+        ((unsigned char *)s1)[n] = ((unsigned char *)s2)[n];
+    return s1;
+}
+
+void *memset(void *s, int c, size_t n) {
+    while (n--)
+        ((unsigned char *)s)[n] = (unsigned char)c;
+    return s;
 }
 
 uintptr_t syscall(uintptr_t num, uintptr_t x0, uintptr_t x1, uintptr_t x2,

@@ -5,6 +5,10 @@ size_t strlen(const char *str);
 size_t strnlen(const char *str, size_t n);
 int strncmp(const char *a, const char *b, size_t n);
 
+void *memcpy(void *s1, const void *s2, size_t n);
+
+void *memset(void *s, int c, size_t n);
+
 uintptr_t syscall(uintptr_t num, uintptr_t x0, uintptr_t x1, uintptr_t x2,
                   uintptr_t x3, uintptr_t x4, uintptr_t x5, uintptr_t x6,
                   uintptr_t x7);

@@ -157,7 +157,7 @@ pub fn unlink(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let ret = MOUNT_TABLE
         .get()
         .unwrap()
-        .remove(path, RemovalType::Directory);
+        .remove(path, RemovalType::File);
 
     if ret.is_ok() {
         unsafe {
@@ -194,7 +194,7 @@ pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         return regs;
     };
 
-    let ret = MOUNT_TABLE.get().unwrap().remove(path, RemovalType::File);
+    let ret = MOUNT_TABLE.get().unwrap().remove(path, RemovalType::Directory);
 
     if ret.is_ok() {
         unsafe {
