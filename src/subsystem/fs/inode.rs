@@ -26,6 +26,20 @@ pub enum FsError {
     EndOfFile,
 }
 
+impl FsError {
+    pub fn error_code(&self) -> isize {
+        match self {
+            FsError::Unsupported => -95,
+            FsError::NoExist => -1,
+            FsError::NoSpace => -28,
+            FsError::BadMeta => -5,
+            FsError::NotEmpty => -39,
+            FsError::InvalidArgument => -22,
+            FsError::EndOfFile => -61,
+        }
+    }
+}
+
 pub type FsResult<T> = Result<T, FsError>;
 
 pub trait InodeOperations: Send + Sync + 'static {

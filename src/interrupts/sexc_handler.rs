@@ -56,6 +56,10 @@ const fn create_sexc_table() -> SexcTable {
 
 pub struct UserInput<T>(T);
 
+impl<T> UserInput<T> {
+    pub const EFAULT: isize = -14;
+}
+
 impl UserInput<&[u8]> {
     pub unsafe fn from_cstr(user_address: usize, max_len: usize) -> Result<Self, ()> {
         if !validate_user_address_range(user_address, 0) {

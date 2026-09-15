@@ -37,7 +37,7 @@ pub fn write(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let user_buf = unsafe { UserInput::from_raw_parts(addr, len) };
     let Ok(user_buf) = user_buf else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
         }
 
         return regs;
@@ -68,7 +68,7 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let user_buf = unsafe { UserInput::from_raw_parts_mut(addr, len) };
     let Ok(mut user_buf) = user_buf else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&mut [u8]>::EFAULT as u64;
         }
 
         return regs;
@@ -103,7 +103,7 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Ok(user_cstr) = user_cstr else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
         }
         return regs;
     };
@@ -114,7 +114,7 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Ok(path) = str::from_utf8(&scratch) else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = -22i64 as u64;
         }
         return regs;
     };
@@ -130,11 +130,8 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
                 (*regs).gprs[0] = descriptor as u64;
             }
         }
-        Err(FsError::NoExist) => unsafe {
-            (*regs).gprs[0] = (-2i64) as u64;
-        },
-        Err(_) => unsafe {
-            (*regs).gprs[0] = (-1i64) as u64;
+        Err(e) => unsafe {
+            (*regs).gprs[0] = e.error_code() as u64;
         },
     }
 
@@ -147,7 +144,7 @@ pub fn unlink(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Ok(user_cstr) = user_cstr else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
         }
         return regs;
     };
@@ -165,14 +162,13 @@ pub fn unlink(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let ret = MOUNT_TABLE.get().unwrap().remove(path, RemovalType::File);
 
-    if ret.is_ok() {
-        unsafe {
+    match ret {
+        Ok(_) => unsafe {
             (*regs).gprs[0] = 0u64;
-        }
-    } else {
-        unsafe {
-            (*regs).gprs[0] = (-1i64) as u64;
-        }
+        },
+        Err(e) => unsafe {
+            (*regs).gprs[0] = e.error_code() as u64;
+        },
     }
 
     regs
@@ -184,7 +180,7 @@ pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Ok(user_cstr) = user_cstr else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
         }
         return regs;
     };
@@ -195,7 +191,7 @@ pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Ok(path) = str::from_utf8(&scratch) else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = -22i64 as u64;
         }
         return regs;
     };
@@ -205,14 +201,13 @@ pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         .unwrap()
         .remove(path, RemovalType::Directory);
 
-    if ret.is_ok() {
-        unsafe {
+    match ret {
+        Ok(_) => unsafe {
             (*regs).gprs[0] = 0u64;
-        }
-    } else {
-        unsafe {
-            (*regs).gprs[0] = (-1i64) as u64;
-        }
+        },
+        Err(e) => unsafe {
+            (*regs).gprs[0] = e.error_code() as u64;
+        },
     }
 
     regs
@@ -263,7 +258,7 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Ok(user_cstr) = user_cstr else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
         }
         return regs;
     };
@@ -286,7 +281,7 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
             unsafe { UserInput::<&[u64]>::from_raw_parts(argv_addr as usize, argc as usize) };
         let Ok(user_argv) = user_argv else {
             unsafe {
-                (*regs).gprs[0] = -1i64 as u64;
+                (*regs).gprs[0] = UserInput::<&[u64]>::EFAULT as u64;
             }
             return regs;
         };
@@ -296,14 +291,14 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
         if len_copied != argc as usize {
             unsafe {
-                (*regs).gprs[0] = -1i64 as u64;
+                (*regs).gprs[0] = UserInput::<&[u64]>::EFAULT as u64;
             }
             return regs;
         }
 
         let Ok(args) = parse_argv(argc, &scratch_argv) else {
             unsafe {
-                (*regs).gprs[0] = -1i64 as u64;
+                (*regs).gprs[0] = -14i64 as u64;
             }
             return regs;
         };
@@ -314,7 +309,7 @@ pub fn exec(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         unsafe { (*regs) = new_regs };
     } else {
         unsafe {
-            (*regs).gprs[0] = (-1i64) as u64;
+            (*regs).gprs[0] = (-2i64) as u64;
         }
     }
 
@@ -338,7 +333,7 @@ pub fn dup2(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         }
     } else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = -22i64 as u64;
         }
     }
 
@@ -389,7 +384,7 @@ pub fn waitpid(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         }
     } else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = -2i64 as u64;
         }
     }
 
@@ -424,7 +419,7 @@ pub fn pipe(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let user_output = unsafe { UserInput::from_raw_parts_mut((*regs).gprs[0] as usize, 2) };
     let Ok(mut user_output) = user_output else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&mut [u32]>::EFAULT as u64;
         }
 
         return regs;
@@ -477,7 +472,7 @@ pub fn getdents(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     };
     let Ok(mut user_dentry_buffer) = user_dentry_buffer else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = UserInput::<&mut [u8]>::EFAULT as u64;
         }
         return regs;
     };
@@ -485,12 +480,12 @@ pub fn getdents(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let Some(inode) = task.user_fd_table().unwrap().find_inode(fd as usize) else {
         unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+            (*regs).gprs[0] = -2i64 as u64;
         }
         return regs;
     };
 
-    let Ok(bytes_written) = inode.list_directory(|list| {
+    let bytes_written = match inode.list_directory(|list| {
         let mut bytes_written = 0;
         for dentry in list.cursor() {
             let name_len = dentry.name().len();
@@ -511,11 +506,14 @@ pub fn getdents(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
             bytes_written += name_len + 1;
         }
         bytes_written
-    }) else {
-        unsafe {
-            (*regs).gprs[0] = -1i64 as u64;
+    }) {
+        Ok(bytes_written) => bytes_written,
+        Err(e) => {
+            unsafe {
+                (*regs).gprs[0] = e.error_code() as u64;
+            }
+            return regs;
         }
-        return regs;
     };
 
     unsafe {

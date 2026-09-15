@@ -739,7 +739,7 @@ impl TaskFdTable {
     pub fn read(&self, descriptor: usize, buf: &mut [u8]) -> isize {
         let fds = self.fds.lock();
         let Some(fd) = fds.find(descriptor) else {
-            return -1;
+            return -2;
         };
 
         fd.read(buf)
@@ -748,7 +748,7 @@ impl TaskFdTable {
     pub fn write(&self, descriptor: usize, buf: &[u8]) -> isize {
         let fds = self.fds.lock();
         let Some(fd) = fds.find(descriptor) else {
-            return -1;
+            return -2;
         };
 
         fd.write(buf)
@@ -849,22 +849,24 @@ impl TaskFd {
         match &*self.inner {
             TaskFdInner::File { inode, offset } => {
                 let local_offset = offset.load(SeqCst);
-                if let Ok(read) = Inode::read(inode, local_offset as u64, buf) {
-                    offset.fetch_add(read, SeqCst);
+                match Inode::read(inode, local_offset as u64, buf) {
+                    Ok(read) => {
+                        offset.fetch_add(read, SeqCst);
 
-                    read as isize
-                } else {
-                    -1
+                        read as isize
+                    }
+                    Err(e) => e.error_code(),
                 }
             }
             TaskFdInner::AnonFile { inode_ops, offset } => {
                 let local_offset = offset.load(SeqCst);
-                if let Ok(read) = inode_ops.read(local_offset as u64, buf) {
-                    offset.fetch_add(read, SeqCst);
+                match inode_ops.read(local_offset as u64, buf) {
+                    Ok(read) => {
+                        offset.fetch_add(read, SeqCst);
 
-                    read as isize
-                } else {
-                    -1
+                        read as isize
+                    }
+                    Err(e) => e.error_code(),
                 }
             }
         }
@@ -872,23 +874,17 @@ impl TaskFd {
 
     pub fn truncate(&self, desired_size: usize) -> isize {
         match &*self.inner {
-            TaskFdInner::File { inode, offset: _ } => {
-                if Inode::truncate(inode, desired_size).is_ok() {
-                    0
-                } else {
-                    -1
-                }
-            }
+            TaskFdInner::File { inode, offset: _ } => match Inode::truncate(inode, desired_size) {
+                Ok(_) => 0,
+                Err(e) => e.error_code(),
+            },
             TaskFdInner::AnonFile {
                 inode_ops,
                 offset: _,
-            } => {
-                if inode_ops.truncate(desired_size).is_ok() {
-                    0
-                } else {
-                    -1
-                }
-            }
+            } => match inode_ops.truncate(desired_size) {
+                Ok(_) => 0,
+                Err(e) => e.error_code(),
+            },
         }
     }
 
@@ -896,22 +892,24 @@ impl TaskFd {
         match &*self.inner {
             TaskFdInner::File { inode, offset } => {
                 let local_offset = offset.load(SeqCst);
-                if let Ok(len) = inode.write(local_offset as u64, buf) {
-                    offset.fetch_add(len, SeqCst);
+                match inode.write(local_offset as u64, buf) {
+                    Ok(len) => {
+                        offset.fetch_add(len, SeqCst);
 
-                    len as isize
-                } else {
-                    -1
+                        len as isize
+                    }
+                    Err(e) => e.error_code(),
                 }
             }
             TaskFdInner::AnonFile { inode_ops, offset } => {
                 let local_offset = offset.load(SeqCst);
-                if let Ok(len) = inode_ops.write(local_offset as u64, buf) {
-                    offset.fetch_add(len, SeqCst);
+                match inode_ops.write(local_offset as u64, buf) {
+                    Ok(len) => {
+                        offset.fetch_add(len, SeqCst);
 
-                    len as isize
-                } else {
-                    -1
+                        len as isize
+                    }
+                    Err(e) => e.error_code(),
                 }
             }
         }
