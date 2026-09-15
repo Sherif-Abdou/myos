@@ -311,10 +311,6 @@ impl InodeOperations for Ext2InodeWrapper {
     fn remove_file(&self, name: &str) -> FsResult<()> {
         let _io_lock = self.io_lock.lock();
 
-        if self.ext2_inode.is_directory() {
-            return Err(FsError::InvalidArgument);
-        }
-
         let mut cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
 
@@ -355,10 +351,6 @@ impl InodeOperations for Ext2InodeWrapper {
 
     fn remove_directory(&self, name: &str) -> FsResult<()> {
         let _io_lock = self.io_lock.lock();
-
-        if !self.ext2_inode.is_directory() {
-            return Err(FsError::InvalidArgument);
-        }
 
         let mut cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);

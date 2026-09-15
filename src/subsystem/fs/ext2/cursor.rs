@@ -515,7 +515,7 @@ impl<'a> Ext2InodeWriteCursor<'a> {
                     start_of_last_header as usize + current_name_len as usize + 8,
                     4,
                 ) as u64;
-                rec_len = (1024 - (next_available_start % 4)) as u16;
+                rec_len = (1024 - (next_available_start % 1024)) as u16;
 
                 let updated_prev_rec_len = (next_available_start - within_block_offset) as u16;
                 self.write(

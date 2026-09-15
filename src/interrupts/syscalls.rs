@@ -1,7 +1,12 @@
 use core::str;
 
 use crate::{
-    allocators::{KBox, align_up, kbox_bytes, kbox_with_len}, interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput}, printk, sched::SCHEDULER, subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe, RemovalType}, timer::us_sleep, utils::Arc,
+    allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
+    interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
+    sched::SCHEDULER,
+    subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe, RemovalType},
+    timer::us_sleep,
+    utils::Arc,
 };
 
 pub(crate) struct Syscall {
@@ -154,10 +159,7 @@ pub fn unlink(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         return regs;
     };
 
-    let ret = MOUNT_TABLE
-        .get()
-        .unwrap()
-        .remove(path, RemovalType::File);
+    let ret = MOUNT_TABLE.get().unwrap().remove(path, RemovalType::File);
 
     if ret.is_ok() {
         unsafe {
@@ -194,7 +196,10 @@ pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         return regs;
     };
 
-    let ret = MOUNT_TABLE.get().unwrap().remove(path, RemovalType::Directory);
+    let ret = MOUNT_TABLE
+        .get()
+        .unwrap()
+        .remove(path, RemovalType::Directory);
 
     if ret.is_ok() {
         unsafe {

@@ -1,20 +1,21 @@
 HOST_OS:=$(shell uname -s)
 TARGET:=build/myos
-USER_MAIN:=usr/main
+USER_MAIN:=usr
 USER_LIB:=usr/lib.c
 OS_PATH:=target/aarch64-unknown-none-softfloat/debug/myos
 
-.PHONY: all clean
+.PHONY: all clean usr
 
 all: $(TARGET)
 
-$(TARGET):
+usr: 
+	$(MAKE) -C usr/
+
+$(TARGET): usr
 	cargo b
 
-$(USER_MAIN): $(USER_MAIN).c
-	aarch64-none-elf-gcc -nostdlib $(USER_LIB) $(USER_MAIN).c -o $(USER_MAIN)
-
 clean:
+	$(MAKE) -C usr/ clean
 	rm -rf build/
 
 
@@ -51,9 +52,9 @@ virt.dtb: $(TARGET)
 		-drive if=none,file=disk.qcow2,format=qcow2,id=hd0 \
 		-device virtio-blk-device,drive=hd0 \
 
-debug: $(USER_MAIN) $(TARGET) virt.dtb
+debug: usr $(TARGET) virt.dtb
 	cargo b
 	$(BASE_COMMAND) -s -S
-emulate: $(USER_MAIN) $(TARGET) virt.dtb
+emulate: usr $(TARGET) virt.dtb
 	cargo b
 	$(BASE_COMMAND)

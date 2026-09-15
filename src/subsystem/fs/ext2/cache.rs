@@ -165,7 +165,6 @@ impl Ext2InodeCache {
 
         let current_bitmap_block = group as u64 * self.super_block.blocks_per_group as u64
             + self.super_block.block_bitmap_offset()
-            + byte_offset as u64
             + 1;
 
         let offset = current_bitmap_block * self.super_block.block_size() + byte_offset as u64;
@@ -191,7 +190,6 @@ impl Ext2InodeCache {
 
         let current_bitmap_block = group as u64 * self.super_block.blocks_per_group as u64
             + self.super_block.inode_bitmap_offset()
-            + byte_offset as u64
             + 1;
 
         let offset = current_bitmap_block * self.super_block.block_size() + byte_offset as u64;
