@@ -754,6 +754,15 @@ impl TaskFdTable {
         fd.write(buf)
     }
 
+    pub fn truncate(&self, descriptor: usize, desired_size: usize) -> isize {
+        let fds = self.fds.lock();
+        let Some(fd) = fds.find(descriptor) else {
+            return -1;
+        };
+
+        fd.truncate(desired_size)
+    }
+
     pub fn close(&self, descriptor: usize) {
         let mut fds = self.fds.lock();
 
@@ -854,6 +863,28 @@ impl TaskFd {
                     offset.fetch_add(read, SeqCst);
 
                     read as isize
+                } else {
+                    -1
+                }
+            }
+        }
+    }
+
+    pub fn truncate(&self, desired_size: usize) -> isize {
+        match &*self.inner {
+            TaskFdInner::File { inode, offset: _ } => {
+                if Inode::truncate(inode, desired_size).is_ok() {
+                    0
+                } else {
+                    -1
+                }
+            }
+            TaskFdInner::AnonFile {
+                inode_ops,
+                offset: _,
+            } => {
+                if inode_ops.truncate(desired_size).is_ok() {
+                    0
                 } else {
                     -1
                 }

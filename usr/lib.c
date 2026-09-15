@@ -30,8 +30,12 @@ int strncmp(const char *a, const char *b, size_t n) {
 }
 
 void *memcpy(void *s1, const void *s2, size_t n) {
-    while (n--)
-        ((unsigned char *)s1)[n] = ((unsigned char *)s2)[n];
+    size_t i = 0;
+
+    while (i < n) {
+        ((unsigned char *)s1)[i] = ((unsigned char *)s2)[i];
+        ++i;
+    }
     return s1;
 }
 
@@ -78,6 +82,14 @@ int open(const char *path) {
     return syscall(8, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }
 
+int unlink(const char *path) {
+    return syscall(25, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+}
+
+int rmdir(const char *path) {
+    return syscall(26, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+}
+
 int exec(const char *path, int argc, const char **argv) {
     return syscall(22, (uintptr_t)path, argc, (uintptr_t)argv, 0, 0, 0, 0, 0);
 }
@@ -91,6 +103,10 @@ int close(int fd) { return syscall(11, fd, 0, 0, 0, 0, 0, 0, 0); }
 int fork() { return syscall(20, 0, 0, 0, 0, 0, 0, 0, 0); }
 
 int waitpid(int pid) { return syscall(27, pid, 0, 0, 0, 0, 0, 0, 0); }
+
+int truncate(int fd, size_t size) {
+    return syscall(6, fd, size, 0, 0, 0, 0, 0, 0);
+}
 
 int puts(const char *str) {
     write(1, str, strlen(str));
@@ -204,8 +220,9 @@ void *malloc(size_t size) {
     uintptr_t header_end = header_start + mem_needed;
     size_t remaining = hole->size - mem_needed;
 
-    *(size_t *)header_start =
-        remaining >= sizeof(struct alloc_ll_header) ? mem_needed : mem_needed + remaining;
+    *(size_t *)header_start = remaining >= sizeof(struct alloc_ll_header)
+                                  ? mem_needed
+                                  : mem_needed + remaining;
 
     if (remaining >= sizeof(struct alloc_ll_header)) {
         struct alloc_ll_header *end = (struct alloc_ll_header *)header_end;
@@ -247,17 +264,16 @@ void free(void *ptr) {
     else
         first_hole = prev;
 
-
     uintptr_t end_of_current;
     while (current && (end_of_current = (uintptr_t)current + current->size) ==
-           (uintptr_t)current->next) {
+                          (uintptr_t)current->next) {
         current->size += current->next->size;
         current->next = current->next->next;
     }
 
     current = prev;
     while (current && (end_of_current = (uintptr_t)current + current->size) ==
-           (uintptr_t)current->next) {
+                          (uintptr_t)current->next) {
         current->size += current->next->size;
         current->next = current->next->next;
     }

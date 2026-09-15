@@ -4,7 +4,7 @@ use crate::{
     allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
     interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
     sched::SCHEDULER,
-    subsystem::{FileSystem, InodeOperations, MOUNT_TABLE, Pipe, RemovalType},
+    subsystem::{FileSystem, FsError, InodeOperations, MOUNT_TABLE, Pipe, RemovalType},
     timer::us_sleep,
     utils::Arc,
 };
@@ -123,15 +123,19 @@ pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let inode = MOUNT_TABLE.get().unwrap().open(path);
 
-    if let Ok(inode) = inode {
-        let descriptor = task.user_fd_table().unwrap().add_file_fd(inode);
-        unsafe {
-            (*regs).gprs[0] = descriptor as u64;
+    match inode {
+        Ok(inode) => {
+            let descriptor = task.user_fd_table().unwrap().add_file_fd(inode);
+            unsafe {
+                (*regs).gprs[0] = descriptor as u64;
+            }
         }
-    } else {
-        unsafe {
+        Err(FsError::NoExist) => unsafe {
+            (*regs).gprs[0] = (-2i64) as u64;
+        },
+        Err(_) => unsafe {
             (*regs).gprs[0] = (-1i64) as u64;
-        }
+        },
     }
 
     regs
@@ -521,11 +525,29 @@ pub fn getdents(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn truncate(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let fd = unsafe { (*regs).gprs[0] };
+    let desired_size = unsafe { (*regs).gprs[1] } as usize;
+
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+    let ret = task
+        .user_fd_table()
+        .unwrap()
+        .truncate(fd as usize, desired_size);
+
+    unsafe {
+        (*regs).gprs[0] = ret as u64;
+    }
+
+    regs
+}
+
 const fn build_syscall_table() -> [Syscall; 100] {
     let mut table = [const { Syscall::empty() }; 100];
 
     table[0] = Syscall::new(write);
     table[1] = Syscall::new(read);
+    table[6] = Syscall::new(truncate);
     table[8] = Syscall::new(open);
     table[11] = Syscall::new(close);
     table[14] = Syscall::new(dup2);

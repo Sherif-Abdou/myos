@@ -201,6 +201,10 @@ impl Inode {
     pub fn remove_directory(&self, name: &str) -> FsResult<()> {
         self.operations.lock().remove_directory(name)
     }
+
+    pub fn truncate(&self, desired_size: usize) -> FsResult<()> {
+        self.operations.lock().truncate(desired_size)
+    }
 }
 
 impl_link!(Inode, 0 => links);

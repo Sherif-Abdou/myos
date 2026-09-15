@@ -198,7 +198,7 @@ pub fn threaded_init(_arg: *mut ()) {
         .create_with_ops("/dev/console", Arc::new(ConsoleDeviceFile))
         .expect("Could not create console device");
 
-    static ELF_FILE: &[u8] = include_bytes!("../usr/main");
+    static ELF_FILE: &[u8] = include_bytes!("../usr/bin/main");
 
     bringup_core(1);
 

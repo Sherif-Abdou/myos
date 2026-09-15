@@ -6,6 +6,8 @@ size_t strlen(const char *str);
 size_t strnlen(const char *str, size_t n);
 int strncmp(const char *a, const char *b, size_t n);
 
+char *strtok(char *str, const char *delimiters);
+
 void *memcpy(void *s1, const void *s2, size_t n);
 
 void *memset(void *s, int c, size_t n);
@@ -46,6 +48,12 @@ void *sbrk(long long offset);
 
 void exit(int code);
 
+int unlink(const char *path);
+
+int rmdir(const char *path);
+
 void *malloc(size_t size);
 
 void free(void *ptr);
+
+int truncate(int fd, size_t size);
