@@ -198,11 +198,15 @@ pub fn threaded_init(_arg: *mut ()) {
         .create_with_ops("/dev/console", Arc::new(ConsoleDeviceFile))
         .expect("Could not create console device");
 
-    static ELF_FILE: &[u8] = include_bytes!("../usr/bin/main");
+    let inode = MOUNT_TABLE
+        .get()
+        .unwrap()
+        .open("/bin/main")
+        .expect("No init process.");
 
     bringup_core(1);
 
-    SCHEDULER.get().unwrap().load_program(Arc::new(ELF_FILE));
+    SCHEDULER.get().unwrap().load_program(inode);
 
     printk!("Kernel initialized\n");
 }

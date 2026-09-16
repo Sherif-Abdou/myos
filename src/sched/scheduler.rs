@@ -1,11 +1,7 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    cpu_local,
-    interrupts::{ExceptionRegisters, daifclr, daifset},
-    sched::{Task, TaskState},
-    timer::ms_sleep,
-    utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
+    cpu_local, elf::ElfSource, interrupts::{ExceptionRegisters, daifclr, daifset}, sched::{Task, TaskState}, timer::ms_sleep, utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
 };
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();
@@ -217,7 +213,7 @@ impl Sched {
         self.run_queue.lock().push_back(task.into());
     }
 
-    pub fn load_program(&self, elf: Arc<&'static [u8]>) {
+    pub fn load_program(&self, elf: Arc<dyn ElfSource + Send + Sync>) {
         let task = Task::load_program(elf);
 
         self.run_queue.lock().push_back(task.into());

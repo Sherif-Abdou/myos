@@ -5,7 +5,7 @@ CFLAGS:=-nostdlib
 LDFLAGS:=-nostdlib
 LDLIBS:=-llibc
 
-all: libc main cat ls
+all: libc main cat ls rm rmdir
 
 libc: lib.o
 	aarch64-none-elf-ar rcs libc.a $^
@@ -18,6 +18,12 @@ cat: cat.o libc.a
 
 ls: ls.o libc.a
 	$(CC) $(LDFLAGS) $^ -o bin/ls
+
+rm: rm.o libc.a
+	$(CC) $(LDFLAGS) $^ -o bin/rm
+
+rmdir: rmdir.o libc.a
+	$(CC) $(LDFLAGS) $^ -o bin/rmdir
 
 clean:
 	rm *.o *.a bin/*

@@ -11,6 +11,19 @@ all: $(TARGET)
 usr: 
 	$(MAKE) -C usr/
 
+INITFS_PROGS:=main ls cat rm rmdir
+
+initfs: usr
+	dd if=/dev/zero of=disk.img bs=1M count=128
+	mkfs.ext2 -O none disk.img
+	debugfs -wR "mkdir bin" disk.img
+	debugfs -wR "mkdir dev" disk.img
+	debugfs -wR "mkdir proc" disk.img
+	@for file in $(INITFS_PROGS); do \
+		debugfs -wR "write ./usr/bin/$$file /bin/$$file" disk.img; \
+	done
+	qemu-img convert -f raw -O qcow2 disk.img disk.qcow2
+
 $(TARGET): usr
 	cargo b
 
