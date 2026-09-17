@@ -1,7 +1,12 @@
 use core::arch::{asm, naked_asm};
 
 use crate::{
-    cpu_local, elf::ElfSource, interrupts::{ExceptionRegisters, daifclr, daifset}, sched::{Task, TaskState}, timer::ms_sleep, utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
+    cpu_local,
+    elf::ElfSource,
+    interrupts::{ExceptionRegisters, daifclr, daifset},
+    sched::{Task, TaskState},
+    timer::ms_sleep,
+    utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
 };
 
 pub static SCHEDULER: OnceSpinLock<Sched> = OnceSpinLock::new();

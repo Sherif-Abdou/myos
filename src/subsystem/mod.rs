@@ -2,6 +2,7 @@ mod block;
 mod char;
 mod fs;
 mod page;
+mod trace;
 
 pub use block::*;
 

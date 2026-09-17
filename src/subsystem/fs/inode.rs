@@ -8,6 +8,24 @@ const PERMISSION_READ: u8 = 4;
 const PERMISSION_WRITE: u8 = 2;
 const PERMISSION_EXECUTE: u8 = 1;
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InodeStat {
+    pub st_dev: u32,
+    pub st_ino: u32,
+    pub st_mode: u32,
+    pub st_nlink: u32,
+    pub st_uid: u32,
+    pub st_gid: u32,
+    pub st_rdev: u32,
+    pub st_size: u32,
+    pub st_atime: u32,
+    pub st_mtime: u32,
+    pub st_ctime: u32,
+    pub st_blksize: u32,
+    pub st_blocks: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsError {
     /// Operation is not supported.
@@ -97,6 +115,10 @@ pub trait InodeOperations: Send + Sync + 'static {
     fn truncate(&self, desired_size: usize) -> FsResult<()> {
         let _ = desired_size;
 
+        Err(FsError::Unsupported)
+    }
+
+    fn stat(&self) -> FsResult<InodeStat> {
         Err(FsError::Unsupported)
     }
 }
@@ -218,6 +240,10 @@ impl Inode {
 
     pub fn truncate(&self, desired_size: usize) -> FsResult<()> {
         self.operations.lock().truncate(desired_size)
+    }
+
+    pub fn stat(&self) -> FsResult<InodeStat> {
+        self.operations.lock().stat()
     }
 }
 

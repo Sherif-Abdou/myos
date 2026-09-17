@@ -4,7 +4,7 @@ use crate::{
     allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
     interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
     sched::SCHEDULER,
-    subsystem::{FileSystem, FsError, InodeOperations, MOUNT_TABLE, Pipe, RemovalType},
+    subsystem::{FileSystem, InodeOperations, InodeStat, MOUNT_TABLE, Pipe, RemovalType},
     timer::us_sleep,
     utils::Arc,
 };
@@ -96,6 +96,55 @@ pub fn read(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 }
 
 const MAX_STRING_LEN: usize = 2048;
+
+pub fn stat(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
+    let user_cstr = unsafe { UserInput::from_cstr(user_cstr_addr, MAX_STRING_LEN) };
+    let user_stat_addr = unsafe { (*regs).gprs[1] } as usize;
+
+    let Ok(user_cstr) = user_cstr else {
+        unsafe {
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
+        }
+        return regs;
+    };
+
+    let mut scratch = kbox_bytes(user_cstr.len());
+
+    user_cstr.copy_to_slice(&mut scratch);
+
+    let Ok(path) = str::from_utf8(&scratch) else {
+        unsafe {
+            (*regs).gprs[0] = -22i64 as u64;
+        }
+        return regs;
+    };
+
+    let inode = MOUNT_TABLE.get().unwrap().open(path);
+
+    match inode.and_then(|inode| inode.stat()) {
+        Ok(inode_stat) => {
+            let user_stat =
+                unsafe { UserInput::<&mut [InodeStat]>::from_raw_parts_mut(user_stat_addr, 1) };
+            let Ok(mut user_stat) = user_stat else {
+                unsafe {
+                    (*regs).gprs[0] = 0;
+                }
+                return regs;
+            };
+
+            user_stat.copy_from_slice(&[inode_stat]);
+            unsafe {
+                (*regs).gprs[0] = 0;
+            }
+        }
+        Err(e) => unsafe {
+            (*regs).gprs[0] = e.error_code() as u64;
+        },
+    }
+
+    regs
+}
 
 pub fn open(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
@@ -548,6 +597,7 @@ const fn build_syscall_table() -> [Syscall; 100] {
     table[6] = Syscall::new(truncate);
     table[8] = Syscall::new(open);
     table[11] = Syscall::new(close);
+    table[12] = Syscall::new(stat);
     table[14] = Syscall::new(dup2);
     table[17] = Syscall::new(nanosleep);
     table[20] = Syscall::new(fork);

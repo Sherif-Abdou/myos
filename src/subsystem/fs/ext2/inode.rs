@@ -4,7 +4,7 @@ use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FsError, FsResult, Inode, InodeDirectoryEntry, InodeOperations, block_cache,
+        FsError, FsResult, Inode, InodeDirectoryEntry, InodeOperations, InodeStat, block_cache,
         fs::ext2::{
             cache::Ext2InodeCache,
             cursor::{Ext2InodeCursor, Ext2InodeWriteCursor},
@@ -417,5 +417,17 @@ impl InodeOperations for Ext2InodeWrapper {
         });
 
         Ok(())
+    }
+
+    fn stat(&self) -> FsResult<crate::subsystem::InodeStat> {
+        let stats = InodeStat {
+            st_ino: self.number,
+            st_size: *self.ext2_inode.size.lock(),
+            st_nlink: *self.ext2_inode.links_count.lock() as u32,
+            st_blksize: self.super_block.block_size() as u32,
+            ..Default::default()
+        };
+
+        Ok(stats)
     }
 }
