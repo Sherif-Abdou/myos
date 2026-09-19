@@ -5,7 +5,9 @@ use crate::{
     elf::ElfSource,
     interrupts::{ExceptionRegisters, daifclr, daifset},
     sched::{Task, TaskState},
+    subsystem::trace::Trace,
     timer::ms_sleep,
+    trace,
     utils::{Arc, CpuLocal, List, ListArc, OnceSpinLock, SpinLock, with_core_critical_section},
 };
 
@@ -240,6 +242,11 @@ impl Sched {
     }
 
     pub fn next_task(&self) -> Option<ExceptionRegisters> {
+        trace!(
+            Trace::SchedEntry,
+            self.local_task().as_ref().map(|task| task.pid).unwrap_or(0)
+        );
+
         let mut tasks = self.run_queue.lock();
 
         let mut staging = self.staging.local().lock();
@@ -265,8 +272,8 @@ impl Sched {
 
             *scheduled = Some(task.clone_arc());
 
+            trace!(Trace::SchedExit, task.pid);
             *staging = Some(task);
-
             let registers = scheduled.as_ref().unwrap().registers.lock();
 
             Some(registers.clone())
@@ -285,6 +292,7 @@ impl Sched {
 
             *scheduled = Some(idle.as_ref().unwrap().clone_arc());
 
+            trace!(Trace::SchedExit, 0u32);
             Some(scheduled.as_ref().unwrap().registers.lock().clone())
         }
     }

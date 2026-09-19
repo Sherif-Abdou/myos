@@ -38,7 +38,7 @@ use crate::{
     smp::bringup_core,
     subsystem::{
         ConsoleDeviceFile, Ext2Fs, FileSystem, KERNEL_PAGE_TABLE, MOUNT_TABLE, MountTable, TmpFs,
-        build_kernel_page_table,
+        build_kernel_page_table, trace::TraceBufferFile,
     },
     timer::{TIMER_QUEUE, TimerQueue},
     utils::{Arc, ArcAny, OnceSpinLock},
@@ -168,6 +168,8 @@ unsafe extern "C" fn secondary_entry() {
     // Allow ourselves to be interrupted by the next timer.
     daifclr();
 
+    trace!(1, 1u32);
+
     loop {
         unsafe { asm!("wfi") };
     }
@@ -195,7 +197,21 @@ pub fn threaded_init(_arg: *mut ()) {
     MOUNT_TABLE
         .get()
         .unwrap()
+        .mount("/proc/", kbox(TmpFs::new()));
+    MOUNT_TABLE
+        .get()
+        .unwrap()
         .create_with_ops("/dev/console", Arc::new(ConsoleDeviceFile))
+        .expect("Could not create console device");
+    MOUNT_TABLE
+        .get()
+        .unwrap()
+        .create_with_ops("/proc/trace0", Arc::new(TraceBufferFile::new(0)))
+        .expect("Could not create console device");
+    MOUNT_TABLE
+        .get()
+        .unwrap()
+        .create_with_ops("/proc/trace1", Arc::new(TraceBufferFile::new(1)))
         .expect("Could not create console device");
 
     let inode = MOUNT_TABLE
@@ -209,4 +225,5 @@ pub fn threaded_init(_arg: *mut ()) {
     SCHEDULER.get().unwrap().load_program(inode);
 
     printk!("Kernel initialized\n");
+    trace!(1, 3u32);
 }
