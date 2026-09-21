@@ -168,8 +168,6 @@ unsafe extern "C" fn secondary_entry() {
     // Allow ourselves to be interrupted by the next timer.
     daifclr();
 
-    trace!(1, 1u32);
-
     loop {
         unsafe { asm!("wfi") };
     }
@@ -225,5 +223,4 @@ pub fn threaded_init(_arg: *mut ()) {
     SCHEDULER.get().unwrap().load_program(inode);
 
     printk!("Kernel initialized\n");
-    trace!(1, 3u32);
 }

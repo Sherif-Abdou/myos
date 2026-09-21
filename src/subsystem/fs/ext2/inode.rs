@@ -1,14 +1,17 @@
 use core::mem::MaybeUninit;
 
 use crate::{
-    impl_link, printk, sched::Mutex, subsystem::{
+    impl_link,
+    sched::Mutex,
+    subsystem::{
         FsError, FsResult, Inode, InodeDirectoryEntry, InodeOperations, InodeStat, block_cache,
         fs::ext2::{
             cache::Ext2InodeCache,
             cursor::{Ext2InodeCursor, Ext2InodeWriteCursor},
             raw::{Ext2Inode, LinkedDirectoryEntryHeader, SuperBlock},
         },
-    }, utils::{Arc, KString, List, ListLinks, SpinLock, UniqueArc, copy_to_uninit},
+    },
+    utils::{Arc, KString, List, ListLinks, SpinLock, UniqueArc, copy_to_uninit},
 };
 
 pub struct Ext2Meta {

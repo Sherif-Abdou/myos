@@ -6,6 +6,7 @@ use crate::{
     impl_link, impl_rblink,
     interrupts::ExceptionRegisters,
     memory::{PAGE_SIZE, Pfn},
+    printk,
     sched::{
         LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
         lazy_buffer::LazyPageBuffer, restore_regs_and_eret,
@@ -15,8 +16,8 @@ use crate::{
         VmaAllocatedArea,
     },
     utils::{
-        Arc, List, ListArc, ListLinks, PhysAddr, RbLinks, RbTree, SpinLock, TreeArc, UniqueArc,
-        with_core_critical_section,
+        Arc, KString, List, ListArc, ListLinks, PhysAddr, RbLinks, RbTree, SpinLock, TreeArc,
+        UniqueArc, with_core_critical_section,
     },
 };
 
@@ -146,6 +147,7 @@ pub struct UserSpaceProcess {
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
     pub(crate) segments: SpinLock<KVec<LazyPageBuffer<Segment>>>,
     pub(crate) fds: TaskFdTable,
+    pub(crate) wkdir: SpinLock<KString>,
 }
 
 impl Drop for UserSpaceProcess {
@@ -198,6 +200,7 @@ impl UserSpaceProcess {
             kernel_stack: new_kernel_stack,
             segments: SpinLock::new(new_segments),
             fds: new_fds,
+            wkdir: SpinLock::new(self.wkdir.lock().clone()),
         }
     }
 }
@@ -361,6 +364,24 @@ impl Task {
         matches!(*self.state.lock(), TaskState::Blocked)
     }
 
+    #[inline(always)]
+    pub fn with_wkdir<R, F: FnOnce(&str) -> R>(&self, func: F) -> R {
+        match &*self.process {
+            Process::Kernel(_) => func("/"),
+            Process::User(user_space_process) => func(user_space_process.wkdir.lock().as_str()),
+        }
+    }
+
+    pub fn chdir(&self, path: &str) {
+        match &*self.process {
+            Process::Kernel(_) => {}
+            Process::User(user_space_process) => {
+                *user_space_process.wkdir.lock() = KString::from_str(path);
+                printk!("Chdir: {}\n", user_space_process.wkdir.lock().as_str());
+            }
+        }
+    }
+
     pub fn with_state_locked<R, F: FnOnce(&mut TaskState) -> R>(&self, func: F) -> R {
         let mut state = self.state.lock();
 
@@ -521,6 +542,7 @@ impl Task {
             user_heap: SpinLock::new(kbox(UserSpaceHeap::new(UserSpaceHeap::DEFAULT_BASE_VMA))),
             kernel_stack: create_kernel_stack(),
             fds: TaskFdTable::new(),
+            wkdir: SpinLock::new(KString::from_str("/")),
         };
 
         let task = UniqueArc::new(Task {

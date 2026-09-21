@@ -2,7 +2,7 @@ use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FileSystem, FsResult, InodeDirectoryEntry, FileType,
+        FileSystem, FileType, FsResult, InodeDirectoryEntry,
         fs::{Inode, InodeOperations},
     },
     utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},

@@ -1,6 +1,21 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct stat {
+    uint32_t st_dev;
+    uint32_t st_ino;
+    uint32_t st_mode;
+    uint32_t st_nlink;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint32_t st_rdev;
+    uint32_t st_size;
+    uint32_t st_atime;
+    uint32_t st_mtime;
+    uint32_t st_ctime;
+    uint32_t st_blocksize;
+    uint32_t st_blocks;
+};
 
 size_t strlen(const char *str);
 size_t strnlen(const char *str, size_t n);
@@ -24,7 +39,7 @@ int open(const char *path);
 
 int creat(const char *path);
 
-int exec(const char *path, int argc, const char ** argv);
+int exec(const char *path, int argc, const char **argv);
 
 int dup2(int old_fd, int new_fd);
 
@@ -53,6 +68,8 @@ void exit(int code);
 int unlink(const char *path);
 
 int rmdir(const char *path);
+
+int chdir(const char *path);
 
 void *malloc(size_t size);
 

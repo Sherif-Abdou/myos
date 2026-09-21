@@ -105,6 +105,11 @@ void parse_command(const char *cmd, size_t cmd_len) {
         ++i;
     }
 
+    if (argc == 2 && strncmp(argv[0], "cd", 2) == 0) {
+        chdir(argv[1]);
+        goto teardown;
+    }
+
     int pid = fork();
 
     if (pid == 0) {

@@ -1,9 +1,9 @@
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR},
     impl_link,
-    sched::Mutex,
+    sched::{Mutex, SCHEDULER},
     subsystem::FileSystem,
-    utils::{Arc, List, ListLinks, OnceSpinLock, UniqueArc},
+    utils::{Arc, KString, List, ListLinks, OnceSpinLock, UniqueArc},
 };
 
 use super::Inode;
@@ -81,6 +81,17 @@ impl FileSystem for MountTable {
     }
 
     fn create(&self, path: &str, flags: super::FileType) -> super::FsResult<Arc<Inode>> {
+        let wkdir = SCHEDULER.get().unwrap().local_task().map(|task| {
+            let mut task = task.with_wkdir(KString::from_str);
+            task.extend_from_string(path);
+
+            task
+        });
+        let path = if !path.starts_with("/") {
+            wkdir.as_ref().map(|wkdir| wkdir.as_str()).unwrap_or("")
+        } else {
+            path
+        };
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();
@@ -97,6 +108,17 @@ impl FileSystem for MountTable {
         path: &str,
         ops: Arc<dyn super::InodeOperations>,
     ) -> super::FsResult<Arc<Inode>> {
+        let wkdir = SCHEDULER.get().unwrap().local_task().map(|task| {
+            let mut task = task.with_wkdir(KString::from_str);
+            task.extend_from_string(path);
+
+            task
+        });
+        let path = if !path.starts_with("/") {
+            wkdir.as_ref().map(|wkdir| wkdir.as_str()).unwrap_or("")
+        } else {
+            path
+        };
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();
@@ -109,6 +131,17 @@ impl FileSystem for MountTable {
     }
 
     fn open(&self, path: &str) -> super::FsResult<Arc<Inode>> {
+        let wkdir = SCHEDULER.get().unwrap().local_task().map(|task| {
+            let mut task = task.with_wkdir(KString::from_str);
+            task.extend_from_string(path);
+
+            task
+        });
+        let path = if !path.starts_with("/") {
+            wkdir.as_ref().map(|wkdir| wkdir.as_str()).unwrap_or("")
+        } else {
+            path
+        };
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();
@@ -121,6 +154,17 @@ impl FileSystem for MountTable {
     }
 
     fn remove(&self, path: &str, flags: super::FileType) -> super::FsResult<()> {
+        let wkdir = SCHEDULER.get().unwrap().local_task().map(|task| {
+            let mut task = task.with_wkdir(KString::from_str);
+            task.extend_from_string(path);
+
+            task
+        });
+        let path = if !path.starts_with("/") {
+            wkdir.as_ref().map(|wkdir| wkdir.as_str()).unwrap_or("")
+        } else {
+            path
+        };
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();

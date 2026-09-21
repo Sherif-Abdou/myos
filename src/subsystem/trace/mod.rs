@@ -1,7 +1,7 @@
 use core::fmt::Write;
 
 use crate::{
-    per_cpu_lock, printk,
+    per_cpu_lock,
     subsystem::{FsError, InodeOperations},
     utils::PerCpuLock,
 };

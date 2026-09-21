@@ -4,7 +4,7 @@ use crate::{
     allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
     interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
     sched::SCHEDULER,
-    subsystem::{FileSystem, InodeOperations, InodeStat, MOUNT_TABLE, Pipe, FileType},
+    subsystem::{FileSystem, FileType, InodeOperations, InodeStat, MOUNT_TABLE, Pipe},
     timer::us_sleep,
     utils::Arc,
 };
@@ -327,10 +327,7 @@ pub fn rmdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
         return regs;
     };
 
-    let ret = MOUNT_TABLE
-        .get()
-        .unwrap()
-        .remove(path, FileType::Directory);
+    let ret = MOUNT_TABLE.get().unwrap().remove(path, FileType::Directory);
 
     match ret {
         Ok(_) => unsafe {
@@ -671,12 +668,47 @@ pub fn truncate(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
     regs
 }
 
+pub fn chdir(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
+    let user_cstr_addr = unsafe { (*regs).gprs[0] } as usize;
+    let user_cstr = unsafe { UserInput::from_cstr(user_cstr_addr, MAX_STRING_LEN) };
+
+    let Ok(user_cstr) = user_cstr else {
+        unsafe {
+            (*regs).gprs[0] = UserInput::<&[u8]>::EFAULT as u64;
+        }
+        return regs;
+    };
+
+    let mut scratch = kbox_bytes(user_cstr.len());
+
+    user_cstr.copy_to_slice(&mut scratch);
+
+    let Ok(path) = str::from_utf8(&scratch) else {
+        unsafe {
+            (*regs).gprs[0] = -22i64 as u64;
+        }
+        return regs;
+    };
+
+    let task = SCHEDULER.get().unwrap().local_task().unwrap();
+
+    // TODO: Check if directory exists first.
+    task.chdir(path);
+
+    unsafe {
+        (*regs).gprs[0] = 0u64;
+    }
+
+    regs
+}
+
 const fn build_syscall_table() -> [Syscall; 100] {
     let mut table = [const { Syscall::empty() }; 100];
 
     table[0] = Syscall::new(write);
     table[1] = Syscall::new(read);
     table[6] = Syscall::new(truncate);
+    table[7] = Syscall::new(chdir);
     table[8] = Syscall::new(open);
     table[9] = Syscall::new(creat);
     table[10] = Syscall::new(mkdir);

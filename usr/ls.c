@@ -1,7 +1,7 @@
 #include "lib.h"
 
 int main(int argc, const char **argv) {
-    const char *path = argv[1];
+    const char *path = argc > 1 ? argv[1] : "";
 
     char buf[64];
     int fd = open(path);

@@ -3,9 +3,8 @@
 //! Assumes 1KB blocks as well.
 
 use crate::{
-    printk,
     subsystem::{
-        FileSystem, FsError, FsResult, Inode, FileType, block_cache,
+        FileSystem, FileType, FsError, FsResult, Inode, block_cache,
         fs::ext2::{
             cache::Ext2InodeCache,
             raw::{Ext2Inode, SuperBlock},
