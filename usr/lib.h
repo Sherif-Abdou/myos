@@ -22,6 +22,8 @@ int read(int fd, char *str, long len);
 
 int open(const char *path);
 
+int creat(const char *path);
+
 int exec(const char *path, int argc, const char ** argv);
 
 int dup2(int old_fd, int new_fd);

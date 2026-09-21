@@ -21,24 +21,12 @@ ssize_t parse_arg(const char *line, size_t len) {
     return i;
 }
 
-struct fd_redirect {
-    int fd;
-    const char *path;
-    bool output;
-};
-
-struct exec_environment {
-    int argc;
-    const char **argv;
-    int redirectc;
-    const struct fd_redirect *redirectv;
-};
-
 void parse_command(const char *cmd, size_t cmd_len) {
     const char *start = cmd;
     size_t len;
+    int i;
 
-    int argc = 0;
+    int arg_count = 0;
 
     while (start[0]) {
         len = parse_arg(start, cmd_len);
@@ -47,32 +35,98 @@ void parse_command(const char *cmd, size_t cmd_len) {
         if (start[0]) {
             start++;
         }
-        argc++;
+        arg_count++;
     }
 
-    if (argc == 0) {
+    if (arg_count == 0) {
         return;
     }
 
-    char **argv = malloc(sizeof(char *) * argc);
+    int argc = 0;
+
+    char **argv = malloc(sizeof(char *) * arg_count);
     start = cmd;
 
-    for (int i = 0; i < argc; ++i) {
+    for (i = 0; i < arg_count; ++i) {
         len = parse_arg(start, cmd_len);
+        if ((strncmp(start, ">", len) == 0) ||
+            (strncmp(start, "<", len) == 0)) {
+            break;
+        }
         argv[i] = malloc((len + 1) * sizeof(char));
         memcpy(argv[i], start, len);
         argv[i][len] = 0;
+        argc++;
 
         start += len;
         if (start[0]) {
             start++;
         }
     }
+    char *output_redirect_path = NULL;
+    char *input_redirect_path = NULL;
+
+    // Redirections spotted
+    while (i < arg_count) {
+        len = parse_arg(start, cmd_len);
+        if (strncmp(start, ">", len) == 0) {
+            free(output_redirect_path);
+
+            start += len;
+            if (start[0]) {
+                start++;
+            }
+            len = parse_arg(start, cmd_len);
+            ++i;
+            if (len == 0)
+                goto teardown;
+
+            output_redirect_path = malloc((len + 1) * sizeof(char));
+            memcpy(output_redirect_path, start, len);
+        } else if (strncmp(start, "<", len) == 0) {
+            free(input_redirect_path);
+
+            start += len;
+            if (start[0]) {
+                start++;
+            }
+            len = parse_arg(start, cmd_len);
+            ++i;
+            if (len == 0)
+                goto teardown;
+
+            input_redirect_path = malloc((len + 1) * sizeof(char));
+            memcpy(input_redirect_path, start, len);
+        }
+        start += len;
+        if (start[0]) {
+            start++;
+        }
+        ++i;
+    }
 
     int pid = fork();
 
     if (pid == 0) {
         int ret;
+        if (input_redirect_path) {
+            puts("Attempting input redirect.");
+            int fd = open(input_redirect_path);
+            if (fd < 0)
+                goto teardown;
+            dup2(fd, 0);
+        }
+        if (output_redirect_path) {
+            puts("Attempting output redirect. ");
+            puts(output_redirect_path);
+            putchar('\n');
+            int fd = open(output_redirect_path);
+            if (fd == -1)
+                fd = creat(output_redirect_path);
+            if (fd < 0)
+                goto teardown;
+            dup2(fd, 1);
+        }
         ret = exec(argv[0], argc, (const char **)argv);
         if (ret < 0) {
             char *new_path = malloc(strlen(argv[0]) + strlen("/bin/") - 1);
@@ -87,6 +141,7 @@ void parse_command(const char *cmd, size_t cmd_len) {
 
     waitpid(pid);
 
+teardown:
     for (int i = 0; i < argc; ++i) {
         free(argv[i]);
     }

@@ -80,12 +80,12 @@ impl FileSystem for MountTable {
         self.root.lock().clone()
     }
 
-    fn create(&self, path: &str) -> super::FsResult<Arc<Inode>> {
+    fn create(&self, path: &str, flags: super::FileType) -> super::FsResult<Arc<Inode>> {
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();
 
-                return mount.fs.create(effective_path);
+                return mount.fs.create(effective_path, flags);
             }
         }
 
@@ -120,7 +120,7 @@ impl FileSystem for MountTable {
         Err(super::FsError::NoExist)
     }
 
-    fn remove(&self, path: &str, flags: super::RemovalType) -> super::FsResult<()> {
+    fn remove(&self, path: &str, flags: super::FileType) -> super::FsResult<()> {
         for mount in self.mounts.lock().cursor() {
             if path.starts_with(&*mount.path) {
                 let effective_path = path.strip_prefix(&*mount.path).unwrap();

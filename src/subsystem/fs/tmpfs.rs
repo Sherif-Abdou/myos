@@ -2,7 +2,7 @@ use crate::{
     impl_link,
     sched::Mutex,
     subsystem::{
-        FileSystem, FsResult, InodeDirectoryEntry, RemovalType,
+        FileSystem, FsResult, InodeDirectoryEntry, FileType,
         fs::{Inode, InodeOperations},
     },
     utils::{Arc, List, ListArc, ListLinks, SpinLock, UniqueArc},
@@ -240,7 +240,7 @@ impl FileSystem for TmpFs {
         Ok(current)
     }
 
-    fn create(&self, path: &str) -> FsResult<Arc<Inode>> {
+    fn create(&self, path: &str, flags: FileType) -> FsResult<Arc<Inode>> {
         let parts = path.split("/");
         let num_parts = path.chars().filter(|c| *c == '/').count();
 
@@ -264,7 +264,11 @@ impl FileSystem for TmpFs {
         }
 
         let child_to_create = path.split('/').nth(num_parts).unwrap();
-        current.create_file(child_to_create)?;
+        if flags == FileType::File {
+            current.create_file(child_to_create)?;
+        } else if flags == FileType::Directory {
+            current.create_directory(child_to_create)?;
+        }
 
         current.list_directory(|list| {
             let mut cursor = list.cursor();
@@ -324,7 +328,7 @@ impl FileSystem for TmpFs {
         })?
     }
 
-    fn remove(&self, path: &str, flags: RemovalType) -> FsResult<()> {
+    fn remove(&self, path: &str, flags: FileType) -> FsResult<()> {
         let parts = path.split("/");
         let num_parts = path.chars().filter(|c| *c == '/').count();
 
@@ -349,8 +353,8 @@ impl FileSystem for TmpFs {
 
         let child_to_remove = path.split('/').nth(num_parts).unwrap();
         match flags {
-            RemovalType::File => current.remove_file(child_to_remove),
-            RemovalType::Directory => current.remove_directory(child_to_remove),
+            FileType::File => current.remove_file(child_to_remove),
+            FileType::Directory => current.remove_directory(child_to_remove),
         }?;
 
         Ok(())

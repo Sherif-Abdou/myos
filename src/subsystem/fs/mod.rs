@@ -41,11 +41,11 @@ pub trait FileSystem {
         Err(FsError::Unsupported)
     }
 
-    fn create(&self, path: &str) -> FsResult<Arc<Inode>> {
+    fn create(&self, path: &str, flags: super::FileType) -> FsResult<Arc<Inode>> {
         Err(FsError::Unsupported)
     }
 
-    fn remove(&self, path: &str, flags: RemovalType) -> FsResult<()> {
+    fn remove(&self, path: &str, flags: FileType) -> FsResult<()> {
         Err(FsError::Unsupported)
     }
 
@@ -55,7 +55,7 @@ pub trait FileSystem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemovalType {
+pub enum FileType {
     File,
     Directory,
 }

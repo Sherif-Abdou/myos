@@ -26,7 +26,7 @@ int strncmp(const char *a, const char *b, size_t n) {
         ++i;
     }
 
-    return a[i] - b[i];
+    return i < n ? a[i] - b[i] : 0;
 }
 
 void *memcpy(void *s1, const void *s2, size_t n) {
@@ -80,6 +80,10 @@ int read(int fd, char *str, long len) {
 
 int open(const char *path) {
     return syscall(8, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+}
+
+int creat(const char *path) {
+    return syscall(9, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }
 
 int unlink(const char *path) {
