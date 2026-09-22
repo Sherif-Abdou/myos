@@ -133,22 +133,24 @@ impl_link!(Ext2InodeWrapper, 0 => links);
 impl Ext2InodeWrapper {}
 
 impl InodeOperations for Ext2InodeWrapper {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> FsResult<usize> {
         let _lock = self.io_lock.lock();
 
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
-        cursor.read(offset, buffer)
+        cursor.read(*offset, buffer).inspect(|bytes_read| *offset += *bytes_read as u64)
     }
 
-    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
+    fn write(&self, offset: &mut u64, buffer: &[u8]) -> FsResult<usize> {
         let _lock = self.io_lock.lock();
 
         let mut write_cursor =
             Ext2InodeWriteCursor::new(self.number, &self.ext2_inode, &self.inode_cache);
-        let written = write_cursor.write(offset, buffer);
+        let bytes_written = write_cursor.write(*offset, buffer);
 
-        Ok(written)
+        *offset += bytes_written as u64;
+
+        Ok(bytes_written)
     }
 
     fn list_directory(&self, list: &mut crate::utils::List<InodeDirectoryEntry>) -> FsResult<()> {

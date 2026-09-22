@@ -870,10 +870,10 @@ impl TaskFd {
     pub fn read(&self, buf: &mut [u8]) -> isize {
         match &*self.inner {
             TaskFdInner::File { inode, offset } => {
-                let local_offset = offset.load(SeqCst);
-                match Inode::read(inode, local_offset as u64, buf) {
+                let mut local_offset = offset.load(SeqCst) as u64;
+                match Inode::read(inode, &mut local_offset, buf) {
                     Ok(read) => {
-                        offset.fetch_add(read, SeqCst);
+                        offset.store(local_offset as usize, SeqCst);
 
                         read as isize
                     }
@@ -881,10 +881,10 @@ impl TaskFd {
                 }
             }
             TaskFdInner::AnonFile { inode_ops, offset } => {
-                let local_offset = offset.load(SeqCst);
-                match inode_ops.read(local_offset as u64, buf) {
+                let mut local_offset = offset.load(SeqCst) as u64;
+                match inode_ops.read(&mut local_offset, buf) {
                     Ok(read) => {
-                        offset.fetch_add(read, SeqCst);
+                        offset.store(local_offset as usize, SeqCst);
 
                         read as isize
                     }
@@ -913,10 +913,10 @@ impl TaskFd {
     pub fn write(&self, buf: &[u8]) -> isize {
         match &*self.inner {
             TaskFdInner::File { inode, offset } => {
-                let local_offset = offset.load(SeqCst);
-                match inode.write(local_offset as u64, buf) {
+                let mut local_offset = offset.load(SeqCst) as u64;
+                match inode.write(&mut local_offset, buf) {
                     Ok(len) => {
-                        offset.fetch_add(len, SeqCst);
+                        offset.store(local_offset as usize, SeqCst);
 
                         len as isize
                     }
@@ -924,10 +924,10 @@ impl TaskFd {
                 }
             }
             TaskFdInner::AnonFile { inode_ops, offset } => {
-                let local_offset = offset.load(SeqCst);
-                match inode_ops.write(local_offset as u64, buf) {
+                let mut local_offset = offset.load(SeqCst) as u64;
+                match inode_ops.write(&mut local_offset, buf) {
                     Ok(len) => {
-                        offset.fetch_add(len, SeqCst);
+                        offset.store(local_offset as usize, SeqCst);
 
                         len as isize
                     }

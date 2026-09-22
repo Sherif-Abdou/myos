@@ -38,7 +38,8 @@ impl<T: ElfSource> ElfSource for Arc<T> {
 impl ElfSource for Inode {
     fn read(&self, offset: usize, buf: &mut [u8]) {
         // TODO: error handle
-        let _ = Inode::read(self, offset as u64, buf);
+        let mut offset = offset as u64;
+        let _ = Inode::read(self, &mut offset, buf);
     }
 }
 

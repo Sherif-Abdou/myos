@@ -23,7 +23,7 @@ impl Pipe {
 }
 
 impl InodeOperations for Pipe {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> crate::subsystem::FsResult<usize> {
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> crate::subsystem::FsResult<usize> {
         let _ = offset;
 
         loop {
@@ -53,7 +53,7 @@ impl InodeOperations for Pipe {
         }
     }
 
-    fn write(&self, offset: u64, buffer: &[u8]) -> crate::subsystem::FsResult<usize> {
+    fn write(&self, offset: &mut u64, buffer: &[u8]) -> crate::subsystem::FsResult<usize> {
         let _ = offset;
 
         loop {

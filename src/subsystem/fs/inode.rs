@@ -61,14 +61,14 @@ impl FsError {
 pub type FsResult<T> = Result<T, FsError>;
 
 pub trait InodeOperations: Send + Sync + 'static {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> FsResult<usize> {
         let _ = offset;
         let _ = buffer;
 
         Err(FsError::Unsupported)
     }
 
-    fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
+    fn write(&self, offset: &mut u64, buffer: &[u8]) -> FsResult<usize> {
         let _ = offset;
         let _ = buffer;
 
@@ -200,11 +200,11 @@ impl Inode {
 }
 
 impl Inode {
-    pub fn read(&self, offset: u64, buffer: &mut [u8]) -> FsResult<usize> {
+    pub fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> FsResult<usize> {
         self.contents().read(offset, buffer)
     }
 
-    pub fn write(&self, offset: u64, buffer: &[u8]) -> FsResult<usize> {
+    pub fn write(&self, offset: &mut u64, buffer: &[u8]) -> FsResult<usize> {
         self.contents().write(offset, buffer)
     }
 

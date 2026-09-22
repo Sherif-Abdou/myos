@@ -1,6 +1,9 @@
 use core::{
     fmt::Write,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{
+        AtomicBool,
+        Ordering::{self, SeqCst},
+    },
 };
 
 use crate::{
@@ -87,11 +90,13 @@ macro_rules! parse_tracecmd {
             let mut timestamp_buf = [0u8; 8];
             let succeeded = $read.read(&mut timestamp_buf);
             if !succeeded {
-                return Ok($write.cursor);
+                break;
             }
             let timestamp = u64::from_le_bytes(timestamp_buf);
 
-            let _ = write!($write, "[{}.{:06}] {}\t| ", timestamp / 1_000_000, timestamp % 1_000_000, $str);
+            if write!($write, "[{}.{:06}] {}\t| ", timestamp / 1_000_000, timestamp % 1_000_000, $str).is_err() {
+                break;
+            }
             parse_tracecmd!($read, $write, $name : $param_type, $($rest_name : $rest_type),*);
         }
     };
@@ -99,10 +104,12 @@ macro_rules! parse_tracecmd {
         let mut buf = [0u8; 4];
         let succeeded = $read.read(&mut buf);
         if !succeeded {
-            return Ok($write.cursor);
+            break;
         }
         let number = u32::from_le_bytes(buf);
-        let _ = write!($write, "{}: {}\n", stringify!($name), number);
+        if write!($write, "{}: {}\n", stringify!($name), number).is_err() {
+            break;
+        }
 
         parse_tracecmd!($($rest_name : $rest_type),*);
     };
@@ -110,10 +117,12 @@ macro_rules! parse_tracecmd {
         let mut buf = [0u8; 8];
         let succeeded = $read.read(&mut buf);
         if !succeeded {
-            return Ok($write.cursor);
+            break;
         }
         let number = u64::from_le_bytes(buf);
-        let _ = write!($write, "{}: {}\n", stringify!($name), number);
+        if write!($write, "{}: {}\n", stringify!($name), number).is_err() {
+            break;
+        }
 
         parse_tracecmd!($($rest_name : $rest_type),*);
     };
@@ -121,12 +130,8 @@ macro_rules! parse_tracecmd {
 }
 
 impl InodeOperations for TraceBuffer {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> super::FsResult<usize> {
-        if offset > 0 {
-            return Err(FsError::EndOfFile);
-        }
-
-        let mut read_cursor = Cursor::new(self.buffer.as_slice(), 0);
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> super::FsResult<usize> {
+        let mut read_cursor = Cursor::new(self.buffer.as_slice(), *offset as usize);
         let mut write_cursor = CursorMut::new(buffer, 0);
 
         loop {
@@ -141,6 +146,12 @@ impl InodeOperations for TraceBuffer {
             }
             parse_tracecmd!(cmd, Trace::SchedEntry => "SchedEntry", read_cursor, write_cursor, pid : u32);
             parse_tracecmd!(cmd, Trace::SchedExit => "SchedExit", read_cursor, write_cursor, pid : u32);
+
+            *offset = read_cursor.cursor as u64;
+        }
+
+        if write_cursor.cursor == 0 {
+            return Err(FsError::EndOfFile);
         }
 
         Ok(write_cursor.cursor)
@@ -152,8 +163,8 @@ pub static TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
 pub struct TraceEnableFile {}
 
 impl InodeOperations for TraceEnableFile {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> super::FsResult<usize> {
-        if offset > 0 {
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> super::FsResult<usize> {
+        if *offset > 0 {
             return Err(FsError::EndOfFile);
         }
 
@@ -165,24 +176,26 @@ impl InodeOperations for TraceEnableFile {
         } else {
             let _ = cursor.write_str("n\n");
         }
+
+        *offset += 1;
         Ok(cursor.cursor)
     }
 
-    fn write(&self, offset: u64, buffer: &[u8]) -> super::FsResult<usize> {
-        if offset > 0 {
+    fn write(&self, offset: &mut u64, buffer: &[u8]) -> super::FsResult<usize> {
+        if *offset > 0 {
             return Err(FsError::EndOfFile);
         }
 
         if buffer.is_empty() {
-            return Ok(0);
+            return Ok(buffer.len());
         }
 
         if buffer[0] == b'1' || buffer[0] == b'y' {
             TRACE_ENABLED.store(true, Ordering::Relaxed);
-            Ok(1)
+            Ok(buffer.len())
         } else if buffer[0] == b'0' || buffer[0] == b'n' {
             TRACE_ENABLED.store(false, Ordering::Relaxed);
-            Ok(1)
+            Ok(buffer.len())
         } else {
             Ok(0)
         }
@@ -192,21 +205,22 @@ impl InodeOperations for TraceEnableFile {
 pub struct TraceClearFile {}
 
 impl InodeOperations for TraceClearFile {
-    fn write(&self, offset: u64, buffer: &[u8]) -> super::FsResult<usize> {
-        if offset > 0 {
+    fn write(&self, offset: &mut u64, buffer: &[u8]) -> super::FsResult<usize> {
+        if *offset > 0 {
             return Err(FsError::EndOfFile);
         }
+
+        TRACE_ENABLED.store(false, SeqCst);
 
         let _ = buffer;
 
         for cpu in 0..MAX_CPUS {
-            // Race conditions are whatever in this case.
             let mut trace_buffer = unsafe { TRACE_BUFFERS.lock_cpu(cpu) };
 
             trace_buffer.buffer.fill(0);
         }
 
-        Ok(0)
+        Ok(buffer.len())
     }
 }
 
@@ -221,7 +235,7 @@ impl TraceBufferFile {
 }
 
 impl InodeOperations for TraceBufferFile {
-    fn read(&self, offset: u64, buffer: &mut [u8]) -> super::FsResult<usize> {
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> super::FsResult<usize> {
         // Just accept we may read inconsistent data.
         unsafe { TRACE_BUFFERS.lock_cpu(self.cpu).read(offset, buffer) }
     }
