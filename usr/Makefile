@@ -5,7 +5,7 @@ CFLAGS:=-nostdlib
 LDFLAGS:=-nostdlib
 LDLIBS:=-llibc
 
-all: libc main cat ls rm rmdir echo mkdir
+all: libc main cat ls rm rmdir echo mkdir stat
 
 libc: lib.o
 	aarch64-none-elf-ar rcs libc.a $^
@@ -30,6 +30,9 @@ mkdir: mkdir.o libc.a
 
 echo: echo.o libc.a
 	$(CC) $(LDFLAGS) $^ -o bin/echo
+
+stat: stat.o libc.a
+	$(CC) $(LDFLAGS) $^ -o bin/stat
 
 clean:
 	rm *.o *.a bin/*

@@ -9,6 +9,61 @@ static volatile int a;
 
 #define MAX_CMD_LEN 16
 
+struct token {
+    const char *str;
+    size_t len;
+};
+
+struct tokenizer {
+    const char *str;
+    size_t remaining_len;
+};
+
+void init_tokenizer(struct tokenizer *tokenizer, const char *str, size_t len) {
+    tokenizer->str = str;
+    tokenizer->remaining_len = len;
+}
+
+int tokenizer_next_token(struct tokenizer *tokenizer, struct token *token) {
+    int i = 0;
+
+    // Skip whitespace.
+    while (tokenizer->str[0] == ' ' && tokenizer->remaining_len > 0) {
+        tokenizer->str++;
+        tokenizer->remaining_len--;
+    };
+
+    while (i < tokenizer->remaining_len && tokenizer->str[i]) {
+        if (tokenizer->str[i] == ' ') {
+            goto output;
+        }
+        ++i;
+    }
+
+output:
+    token->str = tokenizer->str;
+    token->len = i;
+    tokenizer->str += i;
+    tokenizer->remaining_len -= i;
+    return i;
+}
+
+int count_tokens(const char *str, size_t len) {
+    struct tokenizer tokenizer;
+    struct token token;
+
+    init_tokenizer(&tokenizer, str, len);
+
+    int i = 0;
+    do {
+        tokenizer_next_token(&tokenizer, &token);
+        if (token.len > 0)
+            ++i;
+    } while (token.len > 0);
+
+    return i;
+}
+
 ssize_t parse_arg(const char *line, size_t len) {
     int i = 0;
     while (i < len && line[i]) {
@@ -21,22 +76,22 @@ ssize_t parse_arg(const char *line, size_t len) {
     return i;
 }
 
+struct pipeline_process {
+    int argc;
+    const char *argv;
+};
+
+struct pipeline {
+    int process_count;
+    struct pipeline_process *processes;
+    const char *input_redirect_path;
+    const char *output_redirect_path;
+};
+
 void parse_command(const char *cmd, size_t cmd_len) {
-    const char *start = cmd;
-    size_t len;
     int i;
 
-    int arg_count = 0;
-
-    while (start[0]) {
-        len = parse_arg(start, cmd_len);
-
-        start += len;
-        if (start[0]) {
-            start++;
-        }
-        arg_count++;
-    }
+    int arg_count = count_tokens(cmd, cmd_len);
 
     if (arg_count == 0) {
         return;
@@ -45,62 +100,50 @@ void parse_command(const char *cmd, size_t cmd_len) {
     int argc = 0;
 
     char **argv = malloc(sizeof(char *) * arg_count);
-    start = cmd;
+
+    struct token token;
+    struct tokenizer tokenizer;
+    init_tokenizer(&tokenizer, cmd, cmd_len);
 
     for (i = 0; i < arg_count; ++i) {
-        len = parse_arg(start, cmd_len);
-        if ((strncmp(start, ">", len) == 0) ||
-            (strncmp(start, "<", len) == 0)) {
+        tokenizer_next_token(&tokenizer, &token);
+        if ((strncmp(token.str, ">", token.len) == 0) ||
+            (strncmp(token.str, "<", token.len) == 0)) {
             break;
         }
-        argv[i] = malloc((len + 1) * sizeof(char));
-        memcpy(argv[i], start, len);
-        argv[i][len] = 0;
+        argv[i] = malloc((token.len + 1) * sizeof(char));
+        memcpy(argv[i], token.str, token.len);
+        argv[i][token.len] = 0;
         argc++;
-
-        start += len;
-        if (start[0]) {
-            start++;
-        }
     }
     char *output_redirect_path = NULL;
     char *input_redirect_path = NULL;
 
     // Redirections spotted
     while (i < arg_count) {
-        len = parse_arg(start, cmd_len);
-        if (strncmp(start, ">", len) == 0) {
+        tokenizer_next_token(&tokenizer, &token);
+
+        if (strncmp(token.str, ">", token.len) == 0) {
             free(output_redirect_path);
 
-            start += len;
-            if (start[0]) {
-                start++;
-            }
-            len = parse_arg(start, cmd_len);
+            tokenizer_next_token(&tokenizer, &token);
+
             ++i;
-            if (len == 0)
+            if (token.len == 0)
                 goto teardown;
 
-            output_redirect_path = malloc((len + 1) * sizeof(char));
-            memcpy(output_redirect_path, start, len);
-        } else if (strncmp(start, "<", len) == 0) {
+            output_redirect_path = malloc((token.len + 1) * sizeof(char));
+            memcpy(output_redirect_path, token.str, token.len);
+        } else if (strncmp(token.str, "<", token.len) == 0) {
             free(input_redirect_path);
 
-            start += len;
-            if (start[0]) {
-                start++;
-            }
-            len = parse_arg(start, cmd_len);
+            tokenizer_next_token(&tokenizer, &token);
             ++i;
-            if (len == 0)
+            if (token.len == 0)
                 goto teardown;
 
-            input_redirect_path = malloc((len + 1) * sizeof(char));
-            memcpy(input_redirect_path, start, len);
-        }
-        start += len;
-        if (start[0]) {
-            start++;
+            input_redirect_path = malloc((token.len + 1) * sizeof(char));
+            memcpy(input_redirect_path, token.str, token.len);
         }
         ++i;
     }
@@ -115,16 +158,12 @@ void parse_command(const char *cmd, size_t cmd_len) {
     if (pid == 0) {
         int ret;
         if (input_redirect_path) {
-            puts("Attempting input redirect.");
             int fd = open(input_redirect_path);
             if (fd < 0)
                 goto teardown;
             dup2(fd, 0);
         }
         if (output_redirect_path) {
-            puts("Attempting output redirect. ");
-            puts(output_redirect_path);
-            putchar('\n');
             int fd = open(output_redirect_path);
             if (fd == -1)
                 fd = creat(output_redirect_path);

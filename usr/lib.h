@@ -78,3 +78,5 @@ void *malloc(size_t size);
 void free(void *ptr);
 
 int truncate(int fd, size_t size);
+
+int stat(const char *path, struct stat *stat);

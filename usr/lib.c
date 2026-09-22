@@ -159,6 +159,10 @@ int getdents(int fd, char *buf, size_t len) {
     return syscall(24, fd, (uintptr_t)buf, len, 0, 0, 0, 0, 0);
 }
 
+int stat(const char *path, struct stat *stat) {
+    return syscall(12, (uintptr_t)path, (uintptr_t)stat, 0, 0, 0, 0, 0, 0);
+}
+
 __attribute__((weak)) int main(int argc, const char **argv);
 
 int _start() {
