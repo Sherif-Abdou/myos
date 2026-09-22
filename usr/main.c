@@ -77,16 +77,85 @@ ssize_t parse_arg(const char *line, size_t len) {
 }
 
 struct pipeline_process {
+    int arg_capacity;
     int argc;
-    const char *argv;
+    char **argv;
 };
 
 struct pipeline {
     int process_count;
+    int process_capacity;
     struct pipeline_process *processes;
     const char *input_redirect_path;
     const char *output_redirect_path;
 };
+
+void pipeline_init(struct pipeline *pipeline) {
+    memset(pipeline, 0, sizeof(struct pipeline));
+    pipeline->processes = malloc(2 * sizeof(struct pipeline_process));
+    pipeline->process_capacity = 2;
+}
+
+void pipeline_process_init(struct pipeline_process *process) {
+    process->argc = 0;
+    process->arg_capacity = 8;
+    process->argv = malloc(8 * sizeof(char *));
+    memset(process->argv, 0, sizeof(char *) * 8);
+}
+
+void pipeline_process_double_capacity(struct pipeline_process *process) {
+    void *argv = malloc(sizeof(char *) * (process->arg_capacity * 2));
+
+    memcpy(argv, process->argv, process->argc * sizeof(char *));
+
+    free(process->argv);
+
+    process->argv = argv;
+    process->arg_capacity *= 2;
+}
+
+void pipeline_double_capacity(struct pipeline *pipeline) {
+    void *processes = malloc(sizeof(struct pipeline_process) *
+                             (pipeline->process_capacity * 2));
+
+    memcpy(processes, pipeline->processes,
+           pipeline->process_capacity * sizeof(struct pipeline_process));
+
+    free(pipeline->processes);
+
+    pipeline->processes = processes;
+    pipeline->process_capacity *= 2;
+}
+
+void parse_process(struct tokenizer *tokenizer, struct pipeline *pipeline) {
+    struct token token;
+    struct pipeline_process *process = NULL;
+
+    while (1) {
+        tokenizer_next_token(tokenizer, &token);
+        if (token.len == 0)
+            break;
+        if ((strncmp(token.str, ">", token.len) == 0) ||
+            (strncmp(token.str, "<", token.len) == 0)) {
+            break;
+        }
+        if (pipeline->process_capacity == pipeline->process_count)
+            pipeline_double_capacity(pipeline);
+
+        if (!process) {
+            process = &pipeline->processes[pipeline->process_count++];
+            pipeline_process_init(process);
+        }
+
+        if (process->argc == process->arg_capacity)
+            pipeline_process_double_capacity(process);
+
+        process->argv[process->argc] = malloc((token.len + 1) * sizeof(char));
+        memcpy(process->argv[process->argc], token.str, token.len);
+        process->argv[process->argc][token.len] = 0;
+        process->argc++;
+    }
+}
 
 void parse_command(const char *cmd, size_t cmd_len) {
     int i;
@@ -119,34 +188,36 @@ void parse_command(const char *cmd, size_t cmd_len) {
     char *output_redirect_path = NULL;
     char *input_redirect_path = NULL;
 
-    // Redirections spotted
-    while (i < arg_count) {
-        tokenizer_next_token(&tokenizer, &token);
+    do {
+        if (token.len == 0)
+            break;
 
         if (strncmp(token.str, ">", token.len) == 0) {
             free(output_redirect_path);
 
             tokenizer_next_token(&tokenizer, &token);
 
-            ++i;
             if (token.len == 0)
                 goto teardown;
 
             output_redirect_path = malloc((token.len + 1) * sizeof(char));
             memcpy(output_redirect_path, token.str, token.len);
-        } else if (strncmp(token.str, "<", token.len) == 0) {
+            tokenizer_next_token(&tokenizer, &token);
+        } else if (strncmp(token.str, "<", token.len) == 1) {
             free(input_redirect_path);
 
             tokenizer_next_token(&tokenizer, &token);
-            ++i;
+
             if (token.len == 0)
                 goto teardown;
 
             input_redirect_path = malloc((token.len + 1) * sizeof(char));
             memcpy(input_redirect_path, token.str, token.len);
+            tokenizer_next_token(&tokenizer, &token);
+        } else {
+            break;
         }
-        ++i;
-    }
+    } while (token.len > 0);
 
     if (argc == 2 && strncmp(argv[0], "cd", 2) == 0) {
         chdir(argv[1]);
