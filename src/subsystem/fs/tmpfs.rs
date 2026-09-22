@@ -169,27 +169,32 @@ impl InodeOperations for InodeDirectory {
         Err(FsError::NoExist)
     }
 
-    fn remove_directory(&self, name: &str) -> FsResult<()> {
-        self.remove_file(name)?;
-
-        Ok(())
-    }
-}
-
-impl InodeDirectory {
-    fn create_directory(&self, name: &str) {
+    fn create_directory(&self, name: &str) -> FsResult<()> {
         let directory = InodeDirectory {
             children: Mutex::new(List::new()),
         };
         let directory = Arc::new(directory);
         let inode = Arc::new(Inode::new(directory.clone()));
 
-        // TODO: Figure out . and ..
+        directory
+            .children
+            .lock()
+            .push_back(UniqueArc::new(InodeDirectoryEntry::new(".", inode.clone())).into());
+
+        // TODO: Figure out .. support.
 
         let node: ListArc<InodeDirectoryEntry, 0> =
             UniqueArc::new(InodeDirectoryEntry::new(name, inode)).into();
 
         self.children.lock().push_back(node);
+
+        Ok(())
+    }
+
+    fn remove_directory(&self, name: &str) -> FsResult<()> {
+        self.remove_file(name)?;
+
+        Ok(())
     }
 }
 
@@ -242,7 +247,7 @@ impl FileSystem for TmpFs {
 
     fn create(&self, path: &str, flags: FileType) -> FsResult<Arc<Inode>> {
         let parts = path.split("/");
-        let num_parts = path.chars().filter(|c| *c == '/').count();
+        let num_parts = path.chars().filter(|c| *c == '/').count() + 1;
 
         let mut current = self.root();
         for part in parts.take(num_parts.saturating_sub(1)) {
@@ -263,7 +268,7 @@ impl FileSystem for TmpFs {
             current = child.inode().clone();
         }
 
-        let child_to_create = path.split('/').nth(num_parts).unwrap();
+        let child_to_create = path.split('/').nth(num_parts - 1).unwrap();
         if flags == FileType::File {
             current.create_file(child_to_create)?;
         } else if flags == FileType::Directory {
@@ -288,7 +293,7 @@ impl FileSystem for TmpFs {
 
     fn create_with_ops(&self, path: &str, ops: Arc<dyn InodeOperations>) -> FsResult<Arc<Inode>> {
         let parts = path.split("/");
-        let num_parts = path.chars().filter(|c| *c == '/').count();
+        let num_parts = path.chars().filter(|c| *c == '/').count() + 1;
 
         let mut current = self.root();
         for part in parts.take(num_parts.saturating_sub(1)) {
@@ -309,7 +314,7 @@ impl FileSystem for TmpFs {
             current = child.inode().clone();
         }
 
-        let child_to_create = path.split('/').nth(num_parts).unwrap();
+        let child_to_create = path.split('/').nth(num_parts - 1).unwrap();
         current.create_file_with_ops(child_to_create, ops)?;
 
         current.list_directory(|list| {
@@ -330,7 +335,7 @@ impl FileSystem for TmpFs {
 
     fn remove(&self, path: &str, flags: FileType) -> FsResult<()> {
         let parts = path.split("/");
-        let num_parts = path.chars().filter(|c| *c == '/').count();
+        let num_parts = path.chars().filter(|c| *c == '/').count() + 1;
 
         let mut current = self.root();
         for part in parts.take(num_parts.saturating_sub(1)) {
@@ -351,7 +356,7 @@ impl FileSystem for TmpFs {
             current = child.inode().clone();
         }
 
-        let child_to_remove = path.split('/').nth(num_parts).unwrap();
+        let child_to_remove = path.split('/').nth(num_parts - 1).unwrap();
         match flags {
             FileType::File => current.remove_file(child_to_remove),
             FileType::Directory => current.remove_directory(child_to_remove),

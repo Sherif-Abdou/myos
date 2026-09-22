@@ -77,7 +77,7 @@ impl FileSystem for Ext2Fs {
 
     fn create(&self, path: &str, flags: super::FileType) -> super::FsResult<Arc<Inode>> {
         let parts = path.split("/");
-        let num_parts = path.chars().filter(|c| *c == '/').count();
+        let num_parts = path.chars().filter(|c| *c == '/').count() + 1;
 
         let mut current = self.root();
         for part in parts.take(num_parts.saturating_sub(1)) {
@@ -98,7 +98,7 @@ impl FileSystem for Ext2Fs {
             current = child.inode().clone();
         }
 
-        let child_to_create = path.split('/').nth(num_parts).unwrap();
+        let child_to_create = path.split('/').nth(num_parts - 1).unwrap();
         if flags == FileType::File {
             current.create_file(child_to_create)?;
         } else if flags == FileType::Directory {
@@ -147,7 +147,7 @@ impl FileSystem for Ext2Fs {
 
     fn remove(&self, path: &str, flags: FileType) -> FsResult<()> {
         let parts = path.split("/");
-        let num_parts = path.chars().filter(|c| *c == '/').count();
+        let num_parts = path.chars().filter(|c| *c == '/').count() + 1;
 
         let mut current = self.root();
         for part in parts.take(num_parts.saturating_sub(1)) {
@@ -168,7 +168,7 @@ impl FileSystem for Ext2Fs {
             current = child.inode().clone();
         }
 
-        let child_to_remove = path.split('/').nth(num_parts).unwrap();
+        let child_to_remove = path.split('/').nth(num_parts - 1).unwrap();
         match flags {
             FileType::File => current.remove_file(child_to_remove),
             FileType::Directory => current.remove_directory(child_to_remove),

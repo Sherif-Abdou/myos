@@ -1,9 +1,12 @@
-use core::fmt::Write;
+use core::{
+    fmt::Write,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use crate::{
     per_cpu_lock,
     subsystem::{FsError, InodeOperations},
-    utils::PerCpuLock,
+    utils::{MAX_CPUS, PerCpuLock},
 };
 
 const TRACE_BUFFER_SIZE: usize = 16 * 1024;
@@ -144,6 +147,69 @@ impl InodeOperations for TraceBuffer {
     }
 }
 
+pub static TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub struct TraceEnableFile {}
+
+impl InodeOperations for TraceEnableFile {
+    fn read(&self, offset: u64, buffer: &mut [u8]) -> super::FsResult<usize> {
+        if offset > 0 {
+            return Err(FsError::EndOfFile);
+        }
+
+        let enabled = TRACE_ENABLED.load(Ordering::Relaxed);
+        let mut cursor = CursorMut::new(buffer, 0);
+
+        if enabled {
+            let _ = cursor.write_str("y\n");
+        } else {
+            let _ = cursor.write_str("n\n");
+        }
+        Ok(cursor.cursor)
+    }
+
+    fn write(&self, offset: u64, buffer: &[u8]) -> super::FsResult<usize> {
+        if offset > 0 {
+            return Err(FsError::EndOfFile);
+        }
+
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+
+        if buffer[0] == b'1' || buffer[0] == b'y' {
+            TRACE_ENABLED.store(true, Ordering::Relaxed);
+            Ok(1)
+        } else if buffer[0] == b'0' || buffer[0] == b'n' {
+            TRACE_ENABLED.store(false, Ordering::Relaxed);
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
+}
+
+pub struct TraceClearFile {}
+
+impl InodeOperations for TraceClearFile {
+    fn write(&self, offset: u64, buffer: &[u8]) -> super::FsResult<usize> {
+        if offset > 0 {
+            return Err(FsError::EndOfFile);
+        }
+
+        let _ = buffer;
+
+        for cpu in 0..MAX_CPUS {
+            // Race conditions are whatever in this case.
+            let mut trace_buffer = unsafe { TRACE_BUFFERS.lock_cpu(cpu) };
+
+            trace_buffer.buffer.fill(0);
+        }
+
+        Ok(0)
+    }
+}
+
 pub struct TraceBufferFile {
     cpu: usize,
 }
@@ -166,11 +232,11 @@ pub static TRACE_BUFFERS: PerCpuLock<TraceBuffer> = per_cpu_lock!(TraceBuffer::n
 #[macro_export]
 macro_rules! trace {
     ($cmd:expr,$($rest:expr),* $(,)?) => {
-        {
-        let mut trace_buffer = $crate::subsystem::trace::TRACE_BUFFERS.lock();
-        trace_buffer.extend(&($cmd as u16).to_le_bytes());
-        trace_buffer.extend(&($crate::timer::ArmTimer::now()).to_le_bytes());
-        trace!(@buffer = trace_buffer, $($rest),*);
+        if $crate::subsystem::trace::TRACE_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
+            let mut trace_buffer = $crate::subsystem::trace::TRACE_BUFFERS.lock();
+            trace_buffer.extend(&($cmd as u16).to_le_bytes());
+            trace_buffer.extend(&($crate::timer::ArmTimer::now()).to_le_bytes());
+            trace!(@buffer = trace_buffer, $($rest),*);
         }
     };
     (@buffer = $trace_buffer:expr, $param:expr $(,$rest:expr)* $(,)?) => {
