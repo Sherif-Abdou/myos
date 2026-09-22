@@ -364,6 +364,15 @@ impl Task {
         matches!(*self.state.lock(), TaskState::Blocked)
     }
 
+    pub fn make_zombie(&self) {
+        match &*self.process {
+            Process::Kernel(_) => {}
+            Process::User(user_space_process) => {
+                user_space_process.fds.clear();
+            }
+        }
+    }
+
     #[inline(always)]
     pub fn with_wkdir<R, F: FnOnce(&str) -> R>(&self, func: F) -> R {
         match &*self.process {
@@ -699,6 +708,10 @@ impl TaskFdTable {
             fds: Mutex::new(RbTree::new()),
             next_fd_number: AtomicUsize::new(11),
         }
+    }
+
+    pub fn clear(&self) {
+        *self.fds.lock() = RbTree::new();
     }
 
     pub fn find_inode(&self, descriptor: usize) -> Option<Arc<Inode>> {

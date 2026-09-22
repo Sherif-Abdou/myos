@@ -555,10 +555,16 @@ pub fn pipe(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
 
     let task = SCHEDULER.get().unwrap().local_task().unwrap();
 
-    let pipe: Arc<dyn InodeOperations> = Arc::new(Pipe::new());
+    let (read_pipe, write_pipe) = Pipe::pipe();
 
-    let descriptor1 = task.user_fd_table().unwrap().add_anon_file_fd(pipe.clone()) as u32;
-    let descriptor2 = task.user_fd_table().unwrap().add_anon_file_fd(pipe.clone()) as u32;
+    let descriptor1 = task
+        .user_fd_table()
+        .unwrap()
+        .add_anon_file_fd(Arc::new(read_pipe)) as u32;
+    let descriptor2 = task
+        .user_fd_table()
+        .unwrap()
+        .add_anon_file_fd(Arc::new(write_pipe)) as u32;
 
     user_output.copy_from_slice(&[descriptor1, descriptor2]);
 

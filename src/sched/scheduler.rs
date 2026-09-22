@@ -207,6 +207,7 @@ impl Sched {
 
         if let Some(task) = current.take() {
             task.mark_done(code);
+            task.make_zombie();
             if !task.has_parent() {
                 kill_queue.push_back(task);
             }

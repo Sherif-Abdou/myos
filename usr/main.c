@@ -238,7 +238,7 @@ void parse_command(const char *cmd, size_t cmd_len) {
             output_redirect_path = malloc((token.len + 1) * sizeof(char));
             memcpy(output_redirect_path, token.str, token.len);
             tokenizer_next_token(&tokenizer, &token);
-        } else if (strncmp(token.str, "<", token.len) == 1) {
+        } else if (strncmp(token.str, "<", token.len) == 0) {
             free(input_redirect_path);
 
             tokenizer_next_token(&tokenizer, &token);
@@ -297,6 +297,16 @@ void parse_command(const char *cmd, size_t cmd_len) {
                 process->argv[0] = new_path;
                 ret = exec(process->argv[0], process->argc,
                            (const char **)process->argv);
+            }
+        } else {
+            if (process->stdin_fd >= 0) {
+                close(process->stdin_fd);
+                process->stdin_fd = -1;
+            }
+
+            if (process->stdout_fd >= 0) {
+                close(process->stdout_fd);
+                process->stdout_fd = -1;
             }
         }
     }

@@ -1,7 +1,10 @@
+use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
+
 use crate::{
+    printk,
     sched::{Mutex, WaitQueue},
-    subsystem::InodeOperations,
-    utils::Deque,
+    subsystem::{FsError, InodeOperations},
+    utils::{Arc, Deque},
 };
 
 const PIPE_SIZE: usize = 128;
@@ -10,6 +13,8 @@ pub struct Pipe {
     buf: Mutex<Deque<u8, PIPE_SIZE>>,
     tx_waiters: WaitQueue,
     rx_waiters: WaitQueue,
+    senders: AtomicU32,
+    receivers: AtomicU32,
 }
 
 impl Pipe {
@@ -18,7 +23,65 @@ impl Pipe {
             buf: Mutex::new(Deque::new()),
             tx_waiters: WaitQueue::new(),
             rx_waiters: WaitQueue::new(),
+            senders: AtomicU32::new(0),
+            receivers: AtomicU32::new(0),
         }
+    }
+
+    pub fn pipe() -> (ReadPipe, WritePipe) {
+        let inner = Arc::new(Self {
+            buf: Mutex::new(Deque::new()),
+            tx_waiters: WaitQueue::new(),
+            rx_waiters: WaitQueue::new(),
+            senders: AtomicU32::new(1),
+            receivers: AtomicU32::new(1),
+        });
+
+        (ReadPipe(inner.clone()), WritePipe(inner))
+    }
+}
+
+pub struct ReadPipe(Arc<Pipe>);
+
+impl Clone for ReadPipe {
+    fn clone(&self) -> Self {
+        self.0.receivers.fetch_add(1, SeqCst);
+        Self(self.0.clone())
+    }
+}
+
+impl Drop for ReadPipe {
+    fn drop(&mut self) {
+        self.0.receivers.fetch_sub(1, SeqCst);
+    }
+}
+
+impl InodeOperations for ReadPipe {
+    fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> crate::subsystem::FsResult<usize> {
+        self.0.read(offset, buffer)
+    }
+}
+
+pub struct WritePipe(Arc<Pipe>);
+
+impl Clone for WritePipe {
+    fn clone(&self) -> Self {
+        self.0.senders.fetch_add(1, SeqCst);
+        Self(self.0.clone())
+    }
+}
+
+impl Drop for WritePipe {
+    fn drop(&mut self) {
+        if self.0.senders.fetch_sub(1, SeqCst) == 1 {
+            self.0.tx_waiters.unblock_all();
+        }
+    }
+}
+
+impl InodeOperations for WritePipe {
+    fn write(&self, offset: &mut u64, buffer: &[u8]) -> crate::subsystem::FsResult<usize> {
+        self.0.write(offset, buffer)
     }
 }
 
@@ -30,6 +93,10 @@ impl InodeOperations for Pipe {
             let mut pipe = self.buf.lock();
 
             if pipe.is_empty() {
+                if self.senders.load(core::sync::atomic::Ordering::SeqCst) == 0 {
+                    return Err(FsError::EndOfFile);
+                }
+
                 self.tx_waiters.enqueue();
                 drop(pipe);
                 self.tx_waiters.block();
