@@ -1,10 +1,16 @@
 #include "lib.h"
 
 int main(int argc, const char **argv) {
-    const char *path = argv[1];
+    int fd;
+    if (argc == 2) {
+        const char *path = argv[1];
+        fd = open(path);
+    } else {
+        // Otherwise, just read stdin.
+        fd = 0;
+    }
 
     char *buf = malloc(1024);
-    int fd = open(path);
     int ret;
     if (fd < 0)
         return fd;
