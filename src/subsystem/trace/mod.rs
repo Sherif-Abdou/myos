@@ -162,6 +162,12 @@ pub static TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub struct TraceEnableFile {}
 
+impl TraceEnableFile {
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
+
 impl InodeOperations for TraceEnableFile {
     fn read(&self, offset: &mut u64, buffer: &mut [u8]) -> super::FsResult<usize> {
         if *offset > 0 {
@@ -203,6 +209,12 @@ impl InodeOperations for TraceEnableFile {
 }
 
 pub struct TraceClearFile {}
+
+impl TraceClearFile {
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
 
 impl InodeOperations for TraceClearFile {
     fn write(&self, offset: &mut u64, buffer: &[u8]) -> super::FsResult<usize> {

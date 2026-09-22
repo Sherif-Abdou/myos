@@ -94,6 +94,10 @@ int rmdir(const char *path) {
     return syscall(26, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }
 
+int mkdir(const char *path) {
+    return syscall(10, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
+}
+
 int chdir(const char *path) {
     return syscall(7, (uintptr_t)path, 0, 0, 0, 0, 0, 0, 0);
 }

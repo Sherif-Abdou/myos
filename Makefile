@@ -11,7 +11,7 @@ all: $(TARGET)
 usr: 
 	$(MAKE) -C usr/
 
-INITFS_PROGS:=main ls cat rm rmdir echo
+INITFS_PROGS:=main ls cat rm rmdir echo mkdir
 
 initfs: usr
 	dd if=/dev/zero of=disk.img bs=1M count=128

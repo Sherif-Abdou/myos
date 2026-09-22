@@ -138,7 +138,9 @@ impl InodeOperations for Ext2InodeWrapper {
 
         let mut cursor = Ext2InodeCursor::new(&self.ext2_inode);
 
-        cursor.read(*offset, buffer).inspect(|bytes_read| *offset += *bytes_read as u64)
+        cursor
+            .read(*offset, buffer)
+            .inspect(|bytes_read| *offset += *bytes_read as u64)
     }
 
     fn write(&self, offset: &mut u64, buffer: &[u8]) -> FsResult<usize> {

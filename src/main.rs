@@ -28,9 +28,21 @@ use core::{
 };
 
 use crate::{
-    allocators::{KBox, kbox}, arm_pl::init_from_dtb_node, driver::DeviceBus, dtb::{Fdt, find_earlyconsole_node}, interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr}, memory::init_allocator, sched::{SCHEDULER, create_local_idle_task, init_scheduler}, smp::bringup_core, subsystem::{
-        ConsoleDeviceFile, Ext2Fs, FileSystem, FileType, KERNEL_PAGE_TABLE, MOUNT_TABLE, MountTable, TmpFs, build_kernel_page_table, trace::{TraceBufferFile, TraceClearFile, TraceEnableFile},
-    }, timer::{TIMER_QUEUE, TimerQueue}, utils::{Arc, ArcAny, OnceSpinLock},
+    allocators::{KBox, kbox},
+    arm_pl::init_from_dtb_node,
+    driver::DeviceBus,
+    dtb::{Fdt, find_earlyconsole_node},
+    interrupts::{Gic, IRQ_TABLE, RETURN_TABLE, configure_exceptions, daifclr},
+    memory::init_allocator,
+    sched::{SCHEDULER, create_local_idle_task, init_scheduler},
+    smp::bringup_core,
+    subsystem::{
+        ConsoleDeviceFile, Ext2Fs, FileSystem, FileType, KERNEL_PAGE_TABLE, MOUNT_TABLE,
+        MountTable, TmpFs, build_kernel_page_table,
+        trace::{TraceBufferFile, TraceClearFile, TraceEnableFile},
+    },
+    timer::{TIMER_QUEUE, TimerQueue},
+    utils::{Arc, ArcAny, OnceSpinLock},
 };
 
 global_asm!(include_str!("asm/bootstrap.s"));
@@ -208,12 +220,12 @@ pub fn threaded_init(_arg: *mut ()) {
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/proc/trace/enable", Arc::new(TraceEnableFile{}))
+        .create_with_ops("/proc/trace/enable", Arc::new(TraceEnableFile::new()))
         .expect("Could not create console device");
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/proc/trace/clear", Arc::new(TraceClearFile{}))
+        .create_with_ops("/proc/trace/clear", Arc::new(TraceClearFile::new()))
         .expect("Could not create console device");
 
     let inode = MOUNT_TABLE

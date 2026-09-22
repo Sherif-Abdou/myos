@@ -69,6 +69,8 @@ int unlink(const char *path);
 
 int rmdir(const char *path);
 
+int mkdir(const char *path);
+
 int chdir(const char *path);
 
 void *malloc(size_t size);
