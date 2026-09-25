@@ -1,13 +1,12 @@
 use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
 
 use crate::{
-    printk,
     sched::{Mutex, WaitQueue},
     subsystem::{FsError, InodeOperations},
     utils::{Arc, Deque},
 };
 
-const PIPE_SIZE: usize = 128;
+const PIPE_SIZE: usize = 1024;
 
 pub struct Pipe {
     buf: Mutex<Deque<u8, PIPE_SIZE>>,
@@ -52,7 +51,9 @@ impl Clone for ReadPipe {
 
 impl Drop for ReadPipe {
     fn drop(&mut self) {
-        self.0.receivers.fetch_sub(1, SeqCst);
+        if self.0.receivers.fetch_sub(1, SeqCst) == 1 {
+            self.0.rx_waiters.unblock_all();
+        }
     }
 }
 
@@ -127,6 +128,9 @@ impl InodeOperations for Pipe {
             let mut pipe = self.buf.lock();
 
             if pipe.free() == 0 {
+                if self.receivers.load(core::sync::atomic::Ordering::SeqCst) == 0 {
+                    return Err(FsError::EndOfFile);
+                }
                 self.rx_waiters.enqueue();
                 drop(pipe);
                 self.rx_waiters.block();

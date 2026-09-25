@@ -1,15 +1,15 @@
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
-    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kvec},
+    allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kbox_with_len, kvec},
     elf::{ElfParser, ElfSource, Segment},
     impl_link, impl_rblink,
     interrupts::ExceptionRegisters,
     memory::{PAGE_SIZE, Pfn},
     printk,
     sched::{
-        LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR, WaitQueue,
-        lazy_buffer::LazyPageBuffer, restore_regs_and_eret,
+        LazyPageBufferSource, LazyPageZeroedSource, Mutex, SCHEDULER, STACK_VIRTUAL_ADDR,
+        WaitQueue, lazy_buffer::LazyPageBuffer, restore_regs_and_eret,
     },
     subsystem::{
         AnonPageMeta, ArmPageTableRoot, Inode, InodeOperations, PageFaultError, PageFaultType,
@@ -142,7 +142,7 @@ impl UserSpaceHeap {
 
 pub struct UserSpaceProcess {
     pub(crate) page_table: SpinLock<ArmPageTableRoot>,
-    pub(crate) user_stack: SpinLock<KBox<UserTaskStack>>,
+    pub(crate) user_stack: SpinLock<LazyPageBuffer<UserStackSource>>,
     pub(crate) user_heap: SpinLock<KBox<UserSpaceHeap>>,
     pub(crate) kernel_stack: KBox<KernelTaskStack>,
     pub(crate) segments: SpinLock<KVec<LazyPageBuffer<Segment>>>,
@@ -153,6 +153,7 @@ pub struct UserSpaceProcess {
 impl Drop for UserSpaceProcess {
     fn drop(&mut self) {
         let page_table = &self.page_table.lock();
+        self.user_stack.lock().release_pages(page_table);
         self.user_heap.lock().release_pages(page_table);
 
         for segment in self.segments.lock().iter() {
@@ -173,7 +174,11 @@ impl UserSpaceProcess {
 
         let mut new_segments = kvec();
 
-        let new_user_stack = UserTaskStack::clone_box(&self.user_stack.lock());
+        let new_user_stack = self
+            .user_stack
+            .lock()
+            .fork(&self.page_table.lock(), &new_page_table);
+
         let new_user_heap = self
             .user_heap
             .lock()
@@ -186,12 +191,6 @@ impl UserSpaceProcess {
             new_segments.push(segment.fork(&parent_page_table, &new_page_table));
         }
         drop(parent_page_table);
-
-        new_page_table.map_page_range(
-            STACK_VIRTUAL_ADDR,
-            new_user_stack.phys_addr(),
-            new_user_stack.len().div_ceil(4096),
-        );
 
         UserSpaceProcess {
             page_table: SpinLock::new(new_page_table),
@@ -223,6 +222,60 @@ pub enum Process {
     User(UserSpaceProcess),
 }
 
+#[derive(Clone)]
+pub struct UserStackSource {
+    args: KBox<[u8]>,
+}
+
+impl UserStackSource {
+    pub fn new(args: &[u8]) -> Self {
+        let mut user_stack = kbox_with_len(args.len());
+
+        if !args.is_empty() {
+            let copy_start = user_stack.len() - args.len();
+            user_stack[copy_start..].copy_from_slice(args);
+
+            let argc = u64::from_le_bytes(args[..8].try_into().unwrap());
+            for i in 0..argc {
+                let argv = u64::from_le_bytes(
+                    args[8 * (i as usize + 1)..8 * (i as usize + 2)]
+                        .try_into()
+                        .unwrap(),
+                );
+
+                let addr = argv as usize + STACK_VIRTUAL_ADDR + 64 * 1024 - args.len();
+                user_stack[copy_start + 8 * (i as usize + 1)..copy_start + 8 * (i as usize + 2)]
+                    .copy_from_slice(&(addr).to_le_bytes());
+            }
+        }
+
+        Self { args: user_stack }
+    }
+}
+
+impl LazyPageBufferSource for UserStackSource {
+    fn read_page(&self, offset: usize, buf: &mut [u8]) {
+        assert!(offset.is_multiple_of(4096));
+        if offset >= (64 * 1024 - self.args.len()) & !0xfff {
+            buf.fill(0);
+            let args_start = 64 * 1024 - self.args.len();
+            let buf_start = if offset <= args_start {
+                args_start % 4096
+            } else {
+                0
+            };
+            let copy_start = offset.saturating_sub(args_start);
+
+            let copy_len = (4096 - (buf_start % 4096))
+                .min(self.args.len().saturating_sub(copy_start & !0xfff));
+            buf[buf_start..buf_start + copy_len]
+                .copy_from_slice(&self.args[copy_start..copy_start + copy_len]);
+        } else {
+            buf.fill(0);
+        }
+    }
+}
+
 impl Process {
     pub(crate) fn map_page_range(&self, vma: usize, pfn: Pfn, count: usize) {
         match self {
@@ -243,25 +296,11 @@ impl Process {
         let mut segments = kvec();
         let page_table = ArmPageTableRoot::create_user();
 
-        let mut user_stack = create_user_stack();
-        if !args.is_empty() {
-            let copy_start = user_stack.len() - args.len();
-            user_stack.get_mut()[copy_start..].copy_from_slice(args);
-
-            let argc = u64::from_le_bytes(args[..8].try_into().unwrap());
-            for i in 0..argc {
-                let argv = u64::from_le_bytes(
-                    args[8 * (i as usize + 1)..8 * (i as usize + 2)]
-                        .try_into()
-                        .unwrap(),
-                );
-
-                let addr = argv as usize + copy_start + STACK_VIRTUAL_ADDR;
-                user_stack.get_mut()
-                    [copy_start + 8 * (i as usize + 1)..copy_start + 8 * (i as usize + 2)]
-                    .copy_from_slice(&(addr).to_le_bytes());
-            }
-        }
+        let user_stack = LazyPageBuffer::new(
+            UserStackSource::new(args),
+            STACK_VIRTUAL_ADDR,
+            STACK_VIRTUAL_ADDR + 64 * 1024,
+        );
 
         for index in 0..num_segments {
             let segment = parser.segment(index);
@@ -276,12 +315,6 @@ impl Process {
                 ));
             }
         }
-
-        page_table.map_page_range(
-            STACK_VIRTUAL_ADDR,
-            user_stack.phys_addr(),
-            user_stack.len().div_ceil(4096),
-        );
 
         user_process
             .user_heap
@@ -358,6 +391,10 @@ impl Task {
 
     pub fn is_done(&self) -> bool {
         matches!(*self.state.lock(), TaskState::Done(_))
+    }
+
+    pub fn is_runnable(&self) -> bool {
+        matches!(*self.state.lock(), TaskState::Runnable)
     }
 
     pub fn is_blocked(&self) -> bool {
@@ -503,7 +540,7 @@ impl Task {
         registers.elr = (thread_wrapper) as u64;
         registers.gprs[0] = (f as usize) as u64;
         registers.gprs[1] = arg as u64;
-        registers.gprs[31] = task.stack_top();
+        registers.gprs[31] = task.kernel_stack_top();
         assert!(
             registers.gprs[31].is_multiple_of(16),
             "Stack ptr is not aligned"
@@ -522,7 +559,11 @@ impl Task {
         let mut segments = kvec();
         let page_table = ArmPageTableRoot::create_user();
 
-        let user_stack = create_user_stack();
+        let user_stack = LazyPageBuffer::new(
+            UserStackSource::new(&[]),
+            STACK_VIRTUAL_ADDR,
+            STACK_VIRTUAL_ADDR + 64 * 1024,
+        );
 
         for index in 0..num_segments {
             let segment = parser.segment(index);
@@ -538,11 +579,11 @@ impl Task {
             }
         }
 
-        page_table.map_page_range(
-            STACK_VIRTUAL_ADDR,
-            user_stack.phys_addr(),
-            user_stack.len().div_ceil(4096),
-        );
+        // page_table.map_page_range(
+        //     STACK_VIRTUAL_ADDR,
+        //     user_stack.phys_addr(),
+        //     user_stack.len().div_ceil(4096),
+        // );
 
         let userspace = UserSpaceProcess {
             page_table: SpinLock::new(page_table),
@@ -595,9 +636,7 @@ impl Task {
             Process::Kernel(ref kernel_space_task_info) => {
                 kernel_space_task_info.kernel_stack.0.as_ptr().addr() as u64 + STACK_SIZE as u64
             }
-            Process::User(ref user_space_task_info) => {
-                user_space_task_info.user_stack.lock().0.as_ptr().addr() as u64 + STACK_SIZE as u64
-            }
+            Process::User(_) => STACK_VIRTUAL_ADDR as u64 + STACK_SIZE as u64,
         }
     }
 
@@ -657,6 +696,13 @@ impl Task {
         vma: usize,
     ) -> Result<(), PageFaultError> {
         if let Process::User(ref user_process) = *self.process {
+            let stack = user_process.user_stack.lock();
+
+            if stack.contains_vma(vma) {
+                return stack.page_fault(fault_type, vma, &user_process.page_table);
+            }
+
+            drop(stack);
             let heap = user_process.user_heap.lock();
 
             if heap.contains_vma(vma) {

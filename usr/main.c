@@ -20,7 +20,7 @@ struct tokenizer {
     size_t remaining_len;
 };
 
-void init_tokenizer(struct tokenizer *tokenizer, const char *str, size_t len) {
+void tokenizer_init(struct tokenizer *tokenizer, const char *str, size_t len) {
     tokenizer->str = str;
     tokenizer->remaining_len = len;
 }
@@ -53,7 +53,7 @@ int count_tokens(const char *str, size_t len) {
     struct tokenizer tokenizer;
     struct token token;
 
-    init_tokenizer(&tokenizer, str, len);
+    tokenizer_init(&tokenizer, str, len);
 
     int i = 0;
     do {
@@ -209,7 +209,7 @@ void parse_command(const char *cmd, size_t cmd_len) {
     struct tokenizer tokenizer;
 
     struct pipeline pipeline;
-    init_tokenizer(&tokenizer, cmd, cmd_len);
+    tokenizer_init(&tokenizer, cmd, cmd_len);
     pipeline_init(&pipeline);
 
     while (1) {

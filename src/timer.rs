@@ -213,6 +213,7 @@ impl<T: PartialOrd> TimerMinHeap<T> {
 pub fn us_sleep(delay_us: u64) {
     let wait_queue = Arc::new(WaitQueue::new());
 
+    wait_queue.enqueue();
     TIMER_QUEUE.local().get().unwrap().enqueue(
         delay_us,
         |arg| {
@@ -223,7 +224,7 @@ pub fn us_sleep(delay_us: u64) {
         Some(wait_queue.clone()),
     );
 
-    wait_queue.enqueue_and_block();
+    wait_queue.block();
 }
 
 pub fn ms_sleep(delay_ms: u64) {

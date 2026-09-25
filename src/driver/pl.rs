@@ -31,11 +31,7 @@ fn irq_handler(driver: Option<&ArcAny>) {
 
     let status = unsafe { driver.regs.read_u16(UARTMIS) };
     if status & (1 << 5) != 0 {
-        if driver.tx_wait_queue.is_empty() {
-            driver.disable_tx_irq();
-        } else {
-            driver.tx_wait_queue.unblock_all();
-        }
+        driver.tx_wait_queue.unblock_all();
     }
     if status & (1 << 4) != 0 {
         while unsafe { driver.regs.read_u16(UARTFR) } & (1 << 4) == 0 {

@@ -242,6 +242,18 @@ impl Sched {
         *registers = state.clone();
     }
 
+    fn next_runnable_task(tasks: &mut List<Task>) -> Option<ListArc<Task, 0>> {
+        let mut cursor = tasks.cursor_mut();
+        while let Some(task) = cursor.get() {
+            if task.is_runnable() {
+                return Some(cursor.remove());
+            } else {
+                let _ = cursor.next();
+            }
+        }
+        None
+    }
+
     pub fn next_task(&self) -> Option<ExceptionRegisters> {
         trace!(
             Trace::SchedEntry,
@@ -256,9 +268,9 @@ impl Sched {
             tasks.push_back(staging);
         }
 
-        let task = tasks.remove_front();
+        let to_be_scheduled = Self::next_runnable_task(&mut tasks);
 
-        if let Some(task) = task {
+        if let Some(to_be_scheduled_task) = to_be_scheduled {
             let mut scheduled = self.scheduled.local().lock();
             if let Some(ref scheduled) = *scheduled
                 && !scheduled.is_done()
@@ -267,14 +279,14 @@ impl Sched {
                 scheduled.mark_runnable();
             }
 
-            task.bind_pages();
+            to_be_scheduled_task.bind_pages();
 
-            task.mark_running();
+            to_be_scheduled_task.mark_running();
 
-            *scheduled = Some(task.clone_arc());
+            *scheduled = Some(to_be_scheduled_task.clone_arc());
 
-            trace!(Trace::SchedExit, task.pid);
-            *staging = Some(task);
+            trace!(Trace::SchedExit, to_be_scheduled_task.pid);
+            *staging = Some(to_be_scheduled_task);
             let registers = scheduled.as_ref().unwrap().registers.lock();
 
             Some(registers.clone())

@@ -70,8 +70,7 @@ uintptr_t syscall(uintptr_t num, uintptr_t x0, uintptr_t x1, uintptr_t x2,
 }
 
 int write(int fd, const char *buf, size_t len) {
-    syscall(0, fd, (long long)buf, len, 0, 0, 0, 0, 0);
-    return 0;
+    return syscall(0, fd, (long long)buf, len, 0, 0, 0, 0, 0);
 }
 
 int read(int fd, char *str, long len) {

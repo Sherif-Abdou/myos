@@ -40,6 +40,12 @@ impl<T> Mutex<T> {
 
 unsafe impl<T: Send> Sync for Mutex<T> {}
 
+impl<T: Default> Default for Mutex<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
 }

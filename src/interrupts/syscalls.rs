@@ -4,7 +4,7 @@ use crate::{
     allocators::{KBox, align_up, kbox_bytes, kbox_with_len},
     interrupts::{ExceptionRegisters, RETURN_TABLE, daifset, sexc_handler::UserInput},
     sched::SCHEDULER,
-    subsystem::{FileSystem, FileType, InodeOperations, InodeStat, MOUNT_TABLE, Pipe},
+    subsystem::{FileSystem, FileType, InodeStat, MOUNT_TABLE, Pipe},
     timer::us_sleep,
     utils::Arc,
 };
