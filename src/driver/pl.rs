@@ -1,13 +1,5 @@
 use crate::{
-    GIC,
-    allocators::{KBox, kbox},
-    arm_pl::disable_earlyconsole,
-    driver::Driver,
-    dtb::FdtNode,
-    interrupts::{IRQ_TABLE, can_block},
-    sched::WaitQueue,
-    subsystem::{ConsoleDriver, set_console},
-    utils::{Arc, ArcAny, Deque, Mmio, SpinLock, expect_downcast_ref},
+    GIC, allocators::{KBox, kbox}, arm_pl::disable_earlyconsole, driver::Driver, dtb::FdtNode, interrupts::{IRQ_TABLE, can_block}, sched::WaitQueue, subsystem::{ConsoleDriver, add_console, set_kernel_console}, utils::{Arc, ArcAny, Deque, Mmio, SpinLock, expect_downcast_ref},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;
@@ -157,7 +149,8 @@ impl Driver for Pl {
         driver.enable_rx_irq();
 
         disable_earlyconsole();
-        set_console(driver);
+        add_console(driver);
+        set_kernel_console();
     }
 
     fn compatible_string() -> &'static str

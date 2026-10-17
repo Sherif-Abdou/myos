@@ -508,7 +508,7 @@ pub fn waitpid(regs: *mut ExceptionRegisters) -> *const ExceptionRegisters {
             child.completion_waiters.block();
         }
         unsafe {
-            (*regs).gprs[0] = 0;
+            (*regs).gprs[0] = child.exit_code().unwrap() as u64;
         }
     } else {
         unsafe {

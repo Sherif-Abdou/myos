@@ -1,3 +1,4 @@
+mod devtmpfs;
 mod ext2;
 mod inode;
 mod mounts;

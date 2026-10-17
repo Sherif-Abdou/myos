@@ -902,7 +902,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
 
                     if key == current_key {
                         return RangeCursor {
-                            cursor: Cursor {
+                            cursor: TreeCursor {
                                 tree: self,
                                 link: raw_current_link,
                             },
@@ -915,7 +915,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                             raw_current_link = new_link;
                         } else {
                             return RangeCursor {
-                                cursor: Cursor {
+                                cursor: TreeCursor {
                                     tree: self,
                                     link: raw_current_link,
                                 },
@@ -927,7 +927,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                     }
                 }
                 RangeCursor {
-                    cursor: Cursor {
+                    cursor: TreeCursor {
                         tree: self,
                         link: last_left,
                     },
@@ -954,7 +954,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                             raw_current_link = new_link;
                         } else {
                             return RangeCursor {
-                                cursor: Cursor {
+                                cursor: TreeCursor {
                                     tree: self,
                                     link: raw_current_link,
                                 },
@@ -966,7 +966,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                     }
                 }
                 RangeCursor {
-                    cursor: Cursor {
+                    cursor: TreeCursor {
                         tree: self,
                         link: last_left,
                     },
@@ -980,7 +980,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
         }
     }
 
-    pub fn cursor_at_key<K: Borrow<T::Key>>(&self, key: K) -> Option<Cursor<'_, T, N>> {
+    pub fn cursor_at_key<K: Borrow<T::Key>>(&self, key: K) -> Option<TreeCursor<'_, T, N>> {
         let key = key.borrow();
 
         let mut raw_current_link = self.root;
@@ -989,7 +989,7 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
             let current_key = T::key_from_link(&current_link_raw);
 
             if key == current_key {
-                return Some(Cursor {
+                return Some(TreeCursor {
                     tree: self,
                     link: Some(current_link),
                 });
@@ -1003,13 +1003,13 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
     }
 
     /// SAFETY: Caller must gurantee that the node is present within this tree.
-    pub unsafe fn cursor_at_node(&self, node: Arc<T>) -> Cursor<'_, T, N> {
+    pub unsafe fn cursor_at_node(&self, node: Arc<T>) -> TreeCursor<'_, T, N> {
         let link = NonNull::new(unsafe { T::link_from_arc(node.as_inner_ptr() as _) });
 
-        Cursor { tree: self, link }
+        TreeCursor { tree: self, link }
     }
 
-    pub fn cursor(&self) -> Cursor<'_, T, N> {
+    pub fn cursor(&self) -> TreeCursor<'_, T, N> {
         if let Some(root) = self.root {
             let mut node = root;
             let mut pinned_node = unsafe { Self::pin_nonnull_link(&node) };
@@ -1019,12 +1019,12 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
                 pinned_node = unsafe { Self::pin_nonnull_link(&left) };
                 possible_left = unsafe { pinned_node.left() };
             }
-            Cursor {
+            TreeCursor {
                 tree: self,
                 link: Some(node),
             }
         } else {
-            Cursor {
+            TreeCursor {
                 tree: self,
                 link: None,
             }
@@ -1032,12 +1032,12 @@ impl<T: RbNode<T, N>, const N: usize> RbTree<T, N> {
     }
 }
 
-pub struct Cursor<'a, T: RbNode<T, N>, const N: usize = 0> {
+pub struct TreeCursor<'a, T: RbNode<T, N>, const N: usize = 0> {
     tree: &'a RbTree<T, N>,
     link: Option<NonNull<RbLinks>>,
 }
 
-impl<'a, T: RbNode<T, N>, const N: usize> Iterator for Cursor<'a, T, N> {
+impl<'a, T: RbNode<T, N>, const N: usize> Iterator for TreeCursor<'a, T, N> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1056,7 +1056,7 @@ impl<'a, T: RbNode<T, N>, const N: usize> Iterator for Cursor<'a, T, N> {
     }
 }
 
-impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
+impl<'a, T: RbNode<T, N>, const N: usize> TreeCursor<'a, T, N> {
     fn back(&mut self) -> Option<&T> {
         self.link?;
 
@@ -1073,7 +1073,7 @@ impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
     }
 }
 
-impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
+impl<'a, T: RbNode<T, N>, const N: usize> TreeCursor<'a, T, N> {
     pub fn get(&self) -> &'_ T {
         unsafe {
             (*T::arc_from_link(self.link.unwrap().as_ptr()))
@@ -1089,7 +1089,7 @@ impl<'a, T: RbNode<T, N>, const N: usize> Cursor<'a, T, N> {
 }
 
 pub struct RangeCursor<'a, T: RbNode<T, N>, R: RangeBounds<T::Key>, const N: usize = 0> {
-    cursor: Cursor<'a, T, N>,
+    cursor: TreeCursor<'a, T, N>,
     bounds: R,
 }
 

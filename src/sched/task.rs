@@ -393,6 +393,13 @@ impl Task {
         matches!(*self.state.lock(), TaskState::Done(_))
     }
 
+    pub fn exit_code(&self) -> Option<i32> {
+        match *self.state.lock() {
+            TaskState::Done(v) => Some(v),
+            _ => None,
+        }
+    }
+
     pub fn is_runnable(&self) -> bool {
         matches!(*self.state.lock(), TaskState::Runnable)
     }

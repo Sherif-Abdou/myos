@@ -321,13 +321,13 @@ teardown:
 }
 
 void shell(void) {
-    char line[64];
-    line[63] = 0;
+    char *line = malloc(1024);
+    line[1023] = 0;
     size_t cursor = 0;
 
     puts("> ");
     while (1) {
-        size_t bytes_read = read(0, line + cursor, 63 - cursor);
+        size_t bytes_read = read(0, line + cursor, 1023 - cursor);
         if (bytes_read > 0) {
             for (int i = 0; i < bytes_read; ++i) {
                 if (line[cursor] == 127) {

@@ -196,7 +196,7 @@ pub fn threaded_init(_arg: *mut ()) {
     MOUNT_TABLE
         .get()
         .unwrap()
-        .mount("/proc/", kbox(TmpFs::new()));
+        .mount("/sys/", kbox(TmpFs::new()));
     MOUNT_TABLE
         .get()
         .unwrap()
@@ -205,27 +205,27 @@ pub fn threaded_init(_arg: *mut ()) {
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create("/proc/trace", FileType::Directory)
+        .create("/sys/trace", FileType::Directory)
         .unwrap();
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/proc/trace/cpu0", Arc::new(TraceBufferFile::new(0)))
+        .create_with_ops("/sys/trace/cpu0", Arc::new(TraceBufferFile::new(0)))
         .expect("Could not create console device");
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/proc/trace/cpu1", Arc::new(TraceBufferFile::new(1)))
+        .create_with_ops("/sys/trace/cpu1", Arc::new(TraceBufferFile::new(1)))
         .expect("Could not create console device");
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/proc/trace/enable", Arc::new(TraceEnableFile::new()))
+        .create_with_ops("/sys/trace/enable", Arc::new(TraceEnableFile::new()))
         .expect("Could not create console device");
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/proc/trace/clear", Arc::new(TraceClearFile::new()))
+        .create_with_ops("/sys/trace/clear", Arc::new(TraceClearFile::new()))
         .expect("Could not create console device");
 
     let inode = MOUNT_TABLE

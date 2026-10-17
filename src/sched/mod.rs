@@ -1,5 +1,6 @@
 mod lazy_buffer;
 mod mutex;
+mod rwlock;
 mod scheduler;
 mod task;
 mod waitqueue;

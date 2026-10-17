@@ -120,3 +120,29 @@ impl<T> OnceSpinLock<T> {
         }
     }
 }
+
+pub struct LazySpinLock<T, F: Fn() -> T = fn() -> T> {
+    inner: OnceSpinLock<T>,
+    func: F,
+}
+
+impl<T, F: Fn() -> T> LazySpinLock<T, F> {
+    pub const fn new(func: F) -> Self {
+        Self {
+            inner: OnceSpinLock::new(),
+            func,
+        }
+    }
+
+    pub fn get(&self) -> &T {
+        let v = self.inner.get();
+        match v {
+            Some(v) => v,
+            None => {
+                let _ = self.inner.set((self.func)());
+
+                self.inner.get().unwrap()
+            }
+        }
+    }
+}

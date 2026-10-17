@@ -50,6 +50,15 @@ pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
 }
 
+impl<'a, T> MutexGuard<'a, T> {
+    pub fn map<V>(self, func: impl FnOnce(&mut T) -> &mut V) -> MappedMutexGuard<'a, T, V> {
+        MappedMutexGuard {
+            value: func(unsafe { self.mutex.inner.get().as_mut().unwrap() }),
+            guard: self,
+        }
+    }
+}
+
 impl<T> Deref for MutexGuard<'_, T> {
     type Target = T;
 
@@ -68,5 +77,24 @@ impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
         self.mutex.available.store(false, SeqCst);
         self.mutex.wait_queue.unblock_front();
+    }
+}
+
+pub struct MappedMutexGuard<'a, T, V> {
+    guard: MutexGuard<'a, T>,
+    value: &'a mut V,
+}
+
+impl<'a, T, V> DerefMut for MappedMutexGuard<'a, T, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value
+    }
+}
+
+impl<'a, T, V> Deref for MappedMutexGuard<'a, T, V> {
+    type Target = V;
+
+    fn deref(&self) -> &Self::Target {
+        self.value
     }
 }

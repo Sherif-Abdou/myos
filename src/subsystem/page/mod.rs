@@ -24,6 +24,8 @@ use crate::{
     },
 };
 
+// Bitmask constants were ai generated, TODO: Replace
+
 /// Bit 63 — AMEC (encrypted-memory context select, FEAT_MEC).
 const AMEC_OFFSET: u64 = 63;
 const AMEC_MASK: u64 = 0x1 << AMEC_OFFSET;

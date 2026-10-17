@@ -19,11 +19,11 @@ initfs: usr
 	debugfs -wR "mkdir bin" disk.img
 	debugfs -wR "mkdir dev" disk.img
 	debugfs -wR "mkdir proc" disk.img
+	debugfs -wR "mkdir sys" disk.img
 	@for file in $(INITFS_PROGS); do \
 		debugfs -wR "write ./usr/bin/$$file /bin/$$file" disk.img; \
 	done
 	qemu-img convert -f raw -O qcow2 disk.img disk.qcow2
-
 $(TARGET): usr
 	cargo b
 
