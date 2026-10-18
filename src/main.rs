@@ -37,8 +37,8 @@ use crate::{
     sched::{SCHEDULER, create_local_idle_task, init_scheduler},
     smp::bringup_core,
     subsystem::{
-        ConsoleDeviceFile, Ext2Fs, FileSystem, FileType, KERNEL_PAGE_TABLE, MOUNT_TABLE,
-        MountTable, TmpFs, build_kernel_page_table,
+        Ext2Fs, FileSystem, FileType, KERNEL_PAGE_TABLE, KernelConsoleDeviceFile, MOUNT_TABLE,
+        MountTable, TmpFs, build_kernel_page_table, create_devtmpfs, devtmpfs,
         trace::{TraceBufferFile, TraceClearFile, TraceEnableFile},
     },
     timer::{TIMER_QUEUE, TimerQueue},
@@ -181,6 +181,7 @@ pub fn threaded_init(_arg: *mut ()) {
     let fdt = FDT.get().unwrap();
 
     build_kernel_page_table(fdt.root());
+    create_devtmpfs();
 
     assert!(DEVICE_BUS.set(DeviceBus::new()).is_ok());
 
@@ -192,7 +193,7 @@ pub fn threaded_init(_arg: *mut ()) {
     MOUNT_TABLE
         .get()
         .unwrap()
-        .mount("/dev/", kbox(TmpFs::new()));
+        .mount("/dev/", kbox(devtmpfs().clone()));
     MOUNT_TABLE
         .get()
         .unwrap()
@@ -200,7 +201,7 @@ pub fn threaded_init(_arg: *mut ()) {
     MOUNT_TABLE
         .get()
         .unwrap()
-        .create_with_ops("/dev/console", Arc::new(ConsoleDeviceFile))
+        .create_with_ops("/dev/console", Arc::new(KernelConsoleDeviceFile))
         .expect("Could not create console device");
     MOUNT_TABLE
         .get()

@@ -1,5 +1,13 @@
 use crate::{
-    GIC, allocators::{KBox, kbox}, arm_pl::disable_earlyconsole, driver::Driver, dtb::FdtNode, interrupts::{IRQ_TABLE, can_block}, sched::WaitQueue, subsystem::{ConsoleDriver, add_console, set_kernel_console}, utils::{Arc, ArcAny, Deque, Mmio, SpinLock, expect_downcast_ref},
+    GIC,
+    allocators::{KBox, kbox},
+    arm_pl::disable_earlyconsole,
+    driver::Driver,
+    dtb::FdtNode,
+    interrupts::{IRQ_TABLE, can_block},
+    sched::WaitQueue,
+    subsystem::{ConsoleDriver, add_console, set_kernel_console},
+    utils::{Arc, ArcAny, Deque, Mmio, SpinLock, expect_downcast_ref},
 };
 
 const RING_BUFFER_SIZE: usize = 1024;
@@ -138,13 +146,15 @@ impl Driver for Pl {
         })
     }
 
-    fn init(driver: Arc<Pl>, _node: &FdtNode) {
+    fn init(driver: Arc<Pl>, node: &FdtNode) {
         driver.setup_fifo();
+
+        let num = node.read_u32("interrupts", 1).expect("expected number");
 
         IRQ_TABLE
             .lock()
-            .register_interrupt(33, irq_handler, Some(driver.clone()));
-        GIC.get().unwrap().enable_spi(33);
+            .register_interrupt(32 + num as u64, irq_handler, Some(driver.clone()));
+        GIC.get().unwrap().enable_spi(32 + num as usize);
 
         driver.enable_rx_irq();
 

@@ -1,7 +1,7 @@
 mod ll;
 use core::{alloc::Layout, ptr::NonNull};
 
-use alloc::{alloc::Allocator, boxed::Box, vec::Vec};
+use alloc::{alloc::Allocator, boxed::Box, collections::VecDeque, vec::Vec};
 pub use ll::LLAllocator;
 
 struct FakeAllocator;
@@ -81,4 +81,10 @@ pub type KVec<T> = Vec<T, &'static SpinLock<LLAllocator>>;
 
 pub fn kvec<T>() -> KVec<T> {
     Vec::new_in(&KERNEL_ALLOCATOR)
+}
+
+pub type KVecDeque<T> = VecDeque<T, &'static SpinLock<LLAllocator>>;
+
+pub fn kvecdeque<T>() -> KVecDeque<T> {
+    KVecDeque::new_in(&KERNEL_ALLOCATOR)
 }

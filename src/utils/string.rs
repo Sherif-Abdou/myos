@@ -80,6 +80,14 @@ impl KString {
     }
 }
 
+impl core::fmt::Write for KString {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.extend_from_string(s);
+
+        Ok(())
+    }
+}
+
 impl AsRef<str> for KString {
     fn as_ref(&self) -> &str {
         self.as_str()

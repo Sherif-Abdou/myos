@@ -6,6 +6,7 @@ mod tmpfs;
 
 use crate::utils::{Arc, List};
 
+pub use devtmpfs::*;
 pub use ext2::Ext2Fs;
 pub use inode::*;
 pub use mounts::*;

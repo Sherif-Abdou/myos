@@ -1,8 +1,8 @@
 mod block;
 mod char;
+mod console;
 mod fs;
 mod page;
-mod console;
 pub mod trace;
 
 pub use block::*;
@@ -14,4 +14,3 @@ pub use page::*;
 pub use char::*;
 
 pub use console::*;
-

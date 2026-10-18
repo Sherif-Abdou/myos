@@ -1,10 +1,14 @@
-use core::fmt::Write;
+use core::{
+    fmt::Write,
+    sync::atomic::{AtomicU32, Ordering::SeqCst},
+};
 
 use crate::{
     driver::Driver,
     impl_link,
     sched::Mutex,
-    utils::{Arc, LazySpinLock, List, ListArc, ListLinks, UniqueArc},
+    subsystem::{ConsoleDeviceFile, devtmpfs},
+    utils::{Arc, KString, LazySpinLock, List, ListArc, ListLinks, UniqueArc},
 };
 
 pub trait ConsoleDriver: Driver {
@@ -52,11 +56,23 @@ pub fn set_kernel_console() {
 }
 
 pub fn add_console(console: Arc<dyn ConsoleDriver + Send + Sync + 'static>) {
+    static CONSOLE_COUNT: AtomicU32 = AtomicU32::new(0);
     let console = Console {
         driver: console,
         links: ListLinks::new(),
     };
-    CONSOLES.get().push_console(UniqueArc::new(console));
+    let console: ListArc<Console, 0> = UniqueArc::new(console).into();
+    let console_inode = console.clone_arc();
+    CONSOLES.get().push_console(console);
+
+    let index = CONSOLE_COUNT.fetch_add(1, SeqCst);
+    let mut name = KString::new();
+    let _ = write!(name, "console{}", index);
+
+    devtmpfs().push_operation(crate::subsystem::DevTmpFsOp::AddDevice {
+        name,
+        ops: Arc::new(ConsoleDeviceFile::new(console_inode)),
+    });
 }
 
 pub struct ConsoleSubsystem {
