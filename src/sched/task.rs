@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering::SeqCst};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering::SeqCst};
 
 use crate::{
     allocators::{KBox, KERNEL_ALLOCATOR, KVec, kbox, kbox_with_len, kvec},
@@ -349,7 +349,6 @@ static NEXT_PID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
-    Running,
     Runnable,
     Blocked,
     Done(i32),
@@ -359,6 +358,7 @@ pub enum TaskState {
 pub struct Task {
     pub(crate) pid: u32,
     pub(crate) state: SpinLock<TaskState>,
+    pub(crate) running: AtomicBool,
     pub(crate) completion_waiters: WaitQueue,
     pub(crate) registers: SpinLock<ExceptionRegisters>,
     pub(crate) run_queue_links: ListLinks,
@@ -386,7 +386,15 @@ impl Task {
     }
 
     pub fn mark_running(&self) {
-        *self.state.lock() = TaskState::Running;
+        self.running.store(true, SeqCst);
+    }
+
+    pub fn mark_sleep(&self) {
+        self.running.store(false, SeqCst);
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.load(SeqCst)
     }
 
     pub fn is_done(&self) -> bool {
@@ -475,6 +483,7 @@ impl Task {
 
         let new_task = Arc::new(Task {
             pid: Self::next_pid(),
+            running: AtomicBool::new(false),
             state: SpinLock::new(TaskState::Runnable),
             completion_waiters: WaitQueue::new(),
             registers: SpinLock::new(new_registers),
@@ -533,6 +542,7 @@ impl Task {
     pub fn kernel_task_from_fn(f: fn(*mut ()), arg: *mut ()) -> UniqueArc<Task> {
         let task = UniqueArc::new(Task {
             pid: Self::next_pid(),
+            running: AtomicBool::new(false),
             state: SpinLock::new(TaskState::Runnable),
             completion_waiters: WaitQueue::new(),
             registers: SpinLock::new(ExceptionRegisters::default()),
@@ -604,6 +614,7 @@ impl Task {
 
         let task = UniqueArc::new(Task {
             pid: Self::next_pid(),
+            running: AtomicBool::new(false),
             state: SpinLock::new(TaskState::Runnable),
             completion_waiters: WaitQueue::new(),
             registers: SpinLock::new(ExceptionRegisters::default()),

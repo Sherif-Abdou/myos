@@ -187,18 +187,13 @@ impl Sched {
         let task = unsafe { self.blocked_queue.lock().remove_at_unchecked(task) };
 
         // Don't do anything if we're unblocking a running task.
-        let add_to_run_queue = task.with_state_locked(|state| match state {
-            TaskState::Running => false,
-            TaskState::Blocked => {
+        task.with_state_locked(|state| {
+            if state == &TaskState::Blocked {
                 *state = TaskState::Runnable;
-                true
             }
-            _ => panic!("Unexpected state."),
         });
 
-        if add_to_run_queue {
-            run_queue.push_back(task);
-        }
+        run_queue.push_back(task);
     }
 
     pub fn end_task(&self, code: i32) {
@@ -245,7 +240,7 @@ impl Sched {
     fn next_runnable_task(tasks: &mut List<Task>) -> Option<ListArc<Task, 0>> {
         let mut cursor = tasks.cursor_mut();
         while let Some(task) = cursor.get() {
-            if task.is_runnable() {
+            if !task.is_running() && task.is_runnable() {
                 return Some(cursor.remove());
             } else {
                 let _ = cursor.next();
@@ -272,11 +267,11 @@ impl Sched {
 
         if let Some(to_be_scheduled_task) = to_be_scheduled {
             let mut scheduled = self.scheduled.local().lock();
-            if let Some(ref scheduled) = *scheduled
-                && !scheduled.is_done()
-                && !scheduled.is_blocked()
-            {
-                scheduled.mark_runnable();
+            if let Some(ref scheduled) = *scheduled {
+                scheduled.mark_sleep();
+                if !scheduled.is_done() && !scheduled.is_blocked() {
+                    scheduled.mark_runnable();
+                }
             }
 
             to_be_scheduled_task.bind_pages();
@@ -296,11 +291,11 @@ impl Sched {
             let mut scheduled = self.scheduled.local().lock();
 
             idle.as_ref().unwrap().mark_running();
-            if let Some(ref scheduled) = *scheduled
-                && !scheduled.is_done()
-                && !scheduled.is_blocked()
-            {
-                scheduled.mark_runnable();
+            if let Some(ref scheduled) = *scheduled {
+                scheduled.mark_sleep();
+                if !scheduled.is_done() && !scheduled.is_blocked() {
+                    scheduled.mark_runnable();
+                }
             }
 
             *scheduled = Some(idle.as_ref().unwrap().clone_arc());
