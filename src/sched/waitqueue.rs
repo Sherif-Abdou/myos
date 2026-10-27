@@ -35,7 +35,6 @@ impl WaitQueue {
         sched_yield();
     }
 
-    // TODO: Check safety on SMP
     pub fn enqueue(&self) {
         let this_task = SCHEDULER.get().unwrap().local_task();
         let mut wait_queue = self.queue.lock();
@@ -50,12 +49,10 @@ impl WaitQueue {
             .into(),
         );
 
-        // daifset();
         SCHEDULER.get().unwrap().block_this_task();
         drop(wait_queue);
     }
 
-    // TODO: Check safety on SMP
     pub fn prepare_enqueue(&self, f: impl FnOnce() -> bool) -> bool {
         let mut wait_queue = self.queue.lock();
         let should_wait = f();
